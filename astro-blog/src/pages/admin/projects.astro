@@ -1,0 +1,8 @@
+---
+import AdminLayout from '@layouts/AdminLayout.astro';
+import ProjectManager from '@components/vue/ProjectManager.vue';
+---
+
+<AdminLayout title="项目管理">
+  <ProjectManager client:only="vue" />
+</AdminLayout>

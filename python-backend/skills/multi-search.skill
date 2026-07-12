@@ -1,0 +1,14 @@
+# Multi-Search Engine
+## trigger
+搜索、查一下、搜索一下、搜、search、找资料、调研、对比搜索
+
+## workflow
+1. 用 `search_web` 工具搜索，engine 参数可选 bing/duckduckgo/sogou，默认 auto 自动故障转移
+2. 如果多引擎结果互补，合并去重后呈现
+3. 每个结果附标题 + URL + 摘要
+4. 如果用户需要深入阅读某个结果，用 `read_url` 获取全文
+
+## rules
+- 优先使用无需 API Key 的引擎（Bing/DuckDuckGo/Sogou）
+- 结果标注搜索引擎来源
+- 无结果时尝试下一个引擎

@@ -1,0 +1,40 @@
+---
+import BaseLayout from '@layouts/BaseLayout.astro';
+import HomeContent from '@components/vue/HomeContent.vue';
+import ProfileCard from '@components/vue/ProfileCard.vue';
+import AnnouncementBar from '@components/vue/AnnouncementBar.vue';
+import TagCloud from '@components/vue/TagCloud.vue';
+import SiteStats from '@components/vue/SiteStats.vue';
+import DateWidget from '@components/vue/DateWidget.vue';
+import MusicPlayer from '@components/vue/MusicPlayer.vue';
+import SakuraEffect from '@components/vue/SakuraEffect.vue';
+import { SITE } from '@lib/constants';
+---
+
+<BaseLayout>
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 pt-12 pb-12">
+    <div class="flex gap-6 max-lg:flex-col">
+      <SakuraEffect client:only="vue" />
+      <!-- Left Sidebar -->
+      <aside class="w-[220px] flex-shrink-0 max-lg:w-full space-y-4">
+        <div class="sticky top-20 space-y-4" style="padding-top: 12rem;">
+          <ProfileCard client:only="vue" name="Ray" bio="写代码、玩设计、听音乐" />
+          <AnnouncementBar client:only="vue" />
+          <MusicPlayer client:only="vue" />
+        </div>
+      </aside>
+
+      <!-- Main Content (API-driven) -->
+      <HomeContent client:only="vue" />
+
+      <!-- Right Sidebar -->
+      <aside class="w-[220px] flex-shrink-0 max-lg:w-full space-y-4">
+        <div class="sticky top-20 space-y-4" style="padding-top: 12rem;">
+          <DateWidget client:only="vue" />
+          <SiteStats client:only="vue" stats={{ articles: 0, categories: 0, views: 0 }} />
+          <TagCloud client:only="vue" tags={[]} />
+        </div>
+      </aside>
+    </div>
+  </div>
+</BaseLayout>

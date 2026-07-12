@@ -1,0 +1,49 @@
+---
+import { SITE, NAV_LINKS } from '@lib/constants';
+import HeaderAuth from '@components/vue/HeaderAuth.vue';
+
+const currentPath = Astro.url.pathname;
+---
+
+<header class="sticky top-0 z-50 glass border-b border-white/20">
+  <div class="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+    <a href="/" class="flex items-center gap-2 no-underline group">
+      <span class="text-2xl font-bold brand-text">@{SITE.title}</span>
+      <span class="hidden sm:inline text-xs text-gray-400 font-medium -ml-1 mt-1">
+        {SITE.subtitle}
+      </span>
+    </a>
+
+    <nav class="hidden md:flex items-center gap-1" id="main-nav">
+      {NAV_LINKS.map((link) => (
+        <a
+          href={link.href}
+          class={`nav-link${currentPath === link.href ? ' active' : ''}`}
+        >
+          {link.label}
+        </a>
+      ))}
+      <a href="/admin" class={`nav-link${currentPath.startsWith('/admin') ? ' active' : ''}`} id="admin-nav-link" style="display:none">管理</a>
+    </nav>
+
+    <HeaderAuth client:only="vue" />
+  </div>
+</header>
+
+<script>
+  function showAdminLink() {
+    try {
+      const raw = localStorage.getItem('userInfo');
+      if (raw) {
+        const user = JSON.parse(raw);
+        const userType = user.user_type ?? user.userType ?? user.roleType;
+        if (userType === 2) {
+          const link = document.getElementById('admin-nav-link');
+          if (link) link.style.display = '';
+        }
+      }
+    } catch(e) {}
+  }
+  showAdminLink();
+  document.addEventListener('astro:after-swap', showAdminLink);
+</script>

@@ -1,0 +1,8 @@
+---
+import AdminLayout from '@layouts/AdminLayout.astro';
+import MusicManager from '@components/vue/MusicManager.vue';
+---
+
+<AdminLayout title="音乐管理">
+  <MusicManager client:only="vue" />
+</AdminLayout>

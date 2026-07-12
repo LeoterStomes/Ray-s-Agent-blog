@@ -1,0 +1,82 @@
+# Node modules
+node_modules/
+.astro/
+dist/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+ENV/
+env.bak/
+venv.bak/
+
+# Build
+.next/
+.nuxt/
+out/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+
+# OS
+Thumbs.db
+.DS_Store
+*.log
+
+# Project documentation (except README)
+CHANGELOG.md
+CLAUDE.md
+
+# Environment variables (NEVER COMMIT)
+.env
+.env.local
+.env.*.local
+
+# Uploads (user-generated content)
+python-backend/uploads/
+
+# Migration scripts (one-time use, may contain DB config)
+astro-blog/scripts/
+
+# Temporary files
+*.tmp
+*.temp
+~*
+.#*

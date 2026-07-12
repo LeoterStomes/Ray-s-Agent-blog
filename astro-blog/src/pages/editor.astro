@@ -1,0 +1,8 @@
+---
+import BaseLayout from '@layouts/BaseLayout.astro';
+import EditorClient from '@components/vue/EditorClient.vue';
+---
+
+<BaseLayout title="上传文章">
+  <EditorClient client:only="vue" />
+</BaseLayout>

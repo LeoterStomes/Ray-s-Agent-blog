@@ -1,0 +1,53 @@
+# Content Writer
+## trigger
+写文章、起草、帮我写、生成文章、写一篇、投稿、发布文章、create article、write post
+
+## workflow
+1. **查重**: 用 `search_articles` 搜索博客是否已有类似话题，避免重复
+2. **找分类**: 用 `get_categories` 确认应该放哪个分类
+3. **找素材**: 用 `search_web` 搜索最新相关信息作为参考
+4. **生成**: 用 `create_draft` 创建草稿，content 用 HTML 格式
+5. **告知**: 返回草稿链接，建议用户去编辑器完善
+
+## 输出格式（必须严格遵守）
+生成 content 时，必须使用以下 HTML 标签格式化，确保文章美观：
+
+```html
+<h2>章节标题</h2>
+<h3>小标题</h3>
+
+<p>正文段落...</p>
+
+<blockquote>引用或重点提示</blockquote>
+
+<pre><code>
+代码块内容（保持缩进）
+</code></pre>
+
+<ul>
+  <li>要点一</li>
+  <li>要点二</li>
+</ul>
+
+<ol>
+  <li>第一步</li>
+  <li>第二步</li>
+</ol>
+
+<table>
+  <tr><th>列A</th><th>列B</th></tr>
+  <tr><td>数据1</td><td>数据2</td></tr>
+</table>
+
+<p><strong>加粗强调</strong> 和 <em>斜体</em></p>
+```
+
+## rules
+- 标题 <h1> 已由系统渲染，正文从 <h2> 开始
+- **禁止使用 Markdown**（# ## ``` 等），必须用 HTML
+- 每个 <h2> 章节约 300-500 字
+- <h2> 之间用 <hr> 分隔视觉区块
+- 引用来源用 <blockquote> 包裹
+- 代码用 <pre><code> 包裹
+- 至少使用 2 种以上元素（列表/引用/代码块/表格）
+- 如果已有类似文章，建议改写角度

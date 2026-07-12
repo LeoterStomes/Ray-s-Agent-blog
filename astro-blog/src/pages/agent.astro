@@ -1,0 +1,12 @@
+---
+import BaseLayout from '@layouts/BaseLayout.astro';
+import AgentView from '@components/vue/AgentView.vue';
+---
+
+<BaseLayout title="AI 助手">
+  <AgentView client:only="vue" />
+</BaseLayout>
+
+<style is:global>
+  footer { display: none !important; }
+</style>

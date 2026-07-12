@@ -1,0 +1,8 @@
+---
+import AdminLayout from '@layouts/AdminLayout.astro';
+import UserManager from '@components/vue/UserManager.vue';
+---
+
+<AdminLayout title="用户管理">
+  <UserManager client:only="vue" />
+</AdminLayout>

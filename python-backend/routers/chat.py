@@ -1,0 +1,599 @@
+import json
+import asyncio
+import copy
+from datetime import datetime, timezone
+
+import httpx
+from fastapi import APIRouter, Depends, Request, Query
+from fastapi.responses import StreamingResponse, Response
+from sqlalchemy.orm import Session
+
+from database import get_db, SessionLocal
+from models import ConsultationSession, ConsultationMessage
+from schemas import ChatSessionStartRequest
+from auth import get_current_user_id, verify_token
+from config import AI_API_KEY, AI_BASE_URL, AI_MODEL
+from services.agent_service import TOOLS_SCHEMA, execute_tool
+from services.mcp_client import load_mcp_servers, get_mcp_tools, call_mcp_tool
+from pathlib import Path
+
+# ── 加载 MCP Server ──
+_mcp_servers = load_mcp_servers()
+_MCP_TOOLS = get_mcp_tools()
+if _MCP_TOOLS:
+    print(f"[MCP] Loaded {len(_MCP_TOOLS)} external tools from {len(_mcp_servers)} servers")
+ALL_TOOLS = list(TOOLS_SCHEMA) + _MCP_TOOLS
+
+router = APIRouter(prefix="/api/psychological-chat", tags=["AI聊天"])
+
+# ── 加载 Skills ──
+def _load_skills() -> str:
+    skills_dir = Path(__file__).parent.parent / "skills"
+    if not skills_dir.exists():
+        return ""
+    parts = []
+    for f in sorted(skills_dir.glob("*.skill")):
+        try:
+            content = f.read_text(encoding="utf-8")
+            name = f.stem.replace("-", " ").title()
+            parts.append(f"## {name}\n{content}")
+        except Exception:
+            pass
+    return "\n\n".join(parts) if parts else ""
+
+SKILLS_TEXT = _load_skills()
+
+SYSTEM_PROMPT = (
+    "你是 Ray 个人博客（Ray的垃圾站）的 AI 助手。\n"
+    "重要：所有与你对话的用户都是已登录用户（未登录无法使用 AI 助手）。\n"
+    "系统消息中会包含当前用户的用户名、昵称和身份信息，请据此个性化回复。\n\n"
+    "## 你的能力\n"
+    "- 搜索博客文章、读取全文、推荐相关内容、查看分类\n"
+    "- 联网搜索最新信息\n"
+    "- 读取网页和 PDF/DOCX 文档\n"
+    "- AI 摘要总结\n"
+    "- 创建文章草稿\n"
+    "- 导出文件：PDF、Word(DOCX)、TXT\n\n"
+    "## 博客功能介绍\n"
+    "博客有以下功能，用户问到时请据此说明：\n"
+    "- **首页**：最新文章列表 + 轮播推荐 + 侧边栏（博主信息/公告/音乐/日期/统计/标签云）\n"
+    "- **文章页**（/blog）：所有文章列表，支持分类筛选\n"
+    "- **文章详情**：左侧目录导航 + 中间正文 + 右侧推荐文章\n"
+    "- **AI 小助手**：右下角浮窗（快捷问答），点标题栏的展开图标可打开全屏 Agent 页面（/agent）\n"
+    "- **Agent 全屏页**（/agent）：左侧历史对话 + 中间对话区 + 右侧工具面板，支持拖拽上传文件\n"
+    "- **编辑器**（/editor）：写文章，支持 Markdown 快捷输入和图片粘贴\n"
+    "- **项目页**（/projects）：展示博主的项目\n"
+    "- **收藏**（/favorites）：用户收藏的文章\n"
+    "- **登录/注册**（/auth/login）：邮箱验证码注册\n"
+    "- **管理后台**（/admin）：仅管理员可访问，管理文章/分类/项目/音乐/公告/用户/背景壁纸\n\n"
+    "## 工具使用规则\n"
+    "1. 当用户询问博客内容或需要查找信息时，主动调用工具获取准确数据。\n"
+    "2. 可多次调用工具，例如先搜索文章再获取全文，或先搜索再联网补充。\n"
+    "3. **自动联网兜底**：当 search_articles 返回空结果或结果不相关时，必须立即调用 search_web 联网搜索，不要把本地无结果当作最终答案。\n"
+    "4. 回答时引用文章标题并附链接（格式：/blog/{id}），联网结果标注来源 URL。\n"
+    "5. 工具返回空结果时如实告知，不要编造内容。\n"
+    "6. 用户问\"你能做什么\"或\"有什么功能\"时，列出以上博客功能 + 你的 AI 能力。\n\n"
+    "## 回答风格\n"
+    "直接、简洁，用简体中文。\n"
+    "首次对话用一句话打招呼，之后不再重复。\n"
+    "对管理员：用\"您\"称呼，语气尊重服从，主动询问需要什么帮助，像得力助手。\n"
+    "对普通用户：轻松友好，像朋友聊天，用\"你\"称呼。\n"
+    "结合工具返回的实际数据回答，而非泛泛而谈。"
+)
+
+# 注入 Skills
+if SKILLS_TEXT:
+    SYSTEM_PROMPT += "\n\n## 可用专业技能 (Skills)\n"
+    SYSTEM_PROMPT += "根据用户意图匹配对应 Skill，按 Skill 定义的 workflow 顺序调用工具：\n\n"
+    SYSTEM_PROMPT += SKILLS_TEXT
+
+MAX_TOOL_ROUNDS = 10  # 安全上限（正常情况模型会自己决定停止）
+
+# ── 权限控制 ──
+WRITE_TOOLS = {"create_draft", "export_file"}  # 仅 admin(user_type=2) 可用的工具
+
+def _filter_tools_for_user(db: Session, user_id: int) -> list[dict]:
+    """根据用户角色过滤工具列表：admin 全部可用，普通用户移除写工具"""
+    from models import User
+    user = db.query(User).filter(User.id == user_id).first()
+    is_admin = user and user.user_type == 2
+    if is_admin:
+        return TOOLS_SCHEMA  # admin 全部工具
+    return [t for t in TOOLS_SCHEMA if t["function"]["name"] not in WRITE_TOOLS]
+
+def _now():
+    """返回当前 UTC 时间（naive，MySQL 兼容）"""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+@router.post("/session/start")
+def start_session(
+    req: ChatSessionStartRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    title = req.sessionTitle or req.initialMessage or "新对话"
+    title = title[:30]
+
+    session = ConsultationSession(
+        user_id=user_id,
+        session_title=title,
+        started_at=_now(),
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+
+    if req.initialMessage:
+        msg = ConsultationMessage(
+            session_id=session.id,
+            sender_type=1,
+            content=req.initialMessage,
+            created_at=_now(),
+        )
+        db.add(msg)
+        db.commit()
+
+    return {"code": "200", "msg": "操作成功", "data": {"id": str(session.id)}}
+
+
+# ── 会话历史 ──
+
+@router.get("/session/list")
+def list_sessions(
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """列出当前用户的所有会话"""
+    sessions = (
+        db.query(ConsultationSession)
+        .filter(ConsultationSession.user_id == user_id)
+        .order_by(ConsultationSession.started_at.desc())
+        .limit(50)
+        .all()
+    )
+    result = []
+    for s in sessions:
+        # 取第一条用户消息作为预览
+        first_msg = (
+            db.query(ConsultationMessage)
+            .filter(ConsultationMessage.session_id == s.id, ConsultationMessage.sender_type == 1)
+            .order_by(ConsultationMessage.created_at.asc())
+            .first()
+        )
+        result.append({
+            "id": str(s.id),
+            "title": s.session_title or "新对话",
+            "preview": (first_msg.content[:60] if first_msg else ""),
+            "startedAt": s.started_at.isoformat() if s.started_at else "",
+        })
+    return {"code": "200", "msg": "ok", "data": result}
+
+
+@router.get("/session/{session_id}/messages")
+def get_session_messages(
+    session_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """加载某个会话的所有消息（用于恢复历史）"""
+    try:
+        sid_int = int(session_id)
+    except (ValueError, TypeError):
+        return {"code": "400", "msg": "会话ID格式错误", "data": None}
+
+    # 验证会话属于当前用户
+    session = db.query(ConsultationSession).filter(
+        ConsultationSession.id == sid_int,
+        ConsultationSession.user_id == user_id,
+    ).first()
+    if not session:
+        return {"code": "404", "msg": "会话不存在", "data": None}
+
+    messages = (
+        db.query(ConsultationMessage)
+        .filter(ConsultationMessage.session_id == sid_int)
+        .order_by(ConsultationMessage.created_at.asc())
+        .all()
+    )
+    result = []
+    for m in messages:
+        result.append({
+            "role": "user" if m.sender_type == 1 else "assistant",
+            "content": m.content,
+            "createdAt": m.created_at.isoformat() if m.created_at else "",
+        })
+    return {"code": "200", "msg": "ok", "data": result}
+
+
+@router.delete("/session/{session_id}")
+def delete_session(
+    session_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """删除指定会话及其所有消息"""
+    try:
+        sid_int = int(session_id)
+    except (ValueError, TypeError):
+        return {"code": "400", "msg": "会话ID格式错误", "data": None}
+
+    session = db.query(ConsultationSession).filter(
+        ConsultationSession.id == sid_int,
+        ConsultationSession.user_id == user_id,
+    ).first()
+    if not session:
+        return {"code": "404", "msg": "会话不存在", "data": None}
+
+    # 删除所有消息
+    db.query(ConsultationMessage).filter(
+        ConsultationMessage.session_id == sid_int
+    ).delete()
+    # 删除会话
+    db.delete(session)
+    db.commit()
+
+    return {"code": "200", "msg": "已删除", "data": None}
+
+
+@router.post("/stream")
+async def stream_chat(
+    request: Request,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    body = await request.json()
+    session_id = body.get("sessionId", "")
+    user_message = body.get("userMessage", "")
+
+    if not session_id or not user_message:
+        return {"code": "400", "msg": "参数缺失", "data": None}
+
+    # 校验 session_id 类型
+    try:
+        sid_int = int(session_id)
+    except (ValueError, TypeError):
+        return {"code": "400", "msg": "会话ID格式错误", "data": None}
+
+    session = db.query(ConsultationSession).filter(
+        ConsultationSession.id == sid_int,
+        ConsultationSession.user_id == user_id,
+    ).first()
+    if not session:
+        return {"code": "404", "msg": "会话不存在", "data": None}
+
+    # Save user message
+    user_msg = ConsultationMessage(
+        session_id=sid_int,
+        sender_type=1,
+        content=user_message,
+        created_at=_now(),
+    )
+    db.add(user_msg)
+    db.commit()
+
+    # Load history
+    history = (
+        db.query(ConsultationMessage)
+        .filter(ConsultationMessage.session_id == sid_int)
+        .order_by(ConsultationMessage.created_at.asc())
+        .all()
+    )
+
+    # 获取当前用户信息
+    from models import User
+    current_user = db.query(User).filter(User.id == user_id).first()
+    user_ctx = ""
+    if current_user:
+        if current_user.user_type == 2:
+            user_ctx = (
+                f"\n## 当前用户（管理员）\n"
+                f"用户名: {current_user.username}，昵称: {current_user.nickname or '未设置'}。\n"
+                f"这是博客的站长/管理员，拥有最高权限。语气要尊重、积极、服从。\n"
+                f"主动提供帮助，用\"您\"称呼，管理类操作（创建文章、导出文件等）他都可以使用。"
+            )
+        else:
+            user_ctx = (
+                f"\n## 当前用户（普通读者）\n"
+                f"用户名: {current_user.username}，昵称: {current_user.nickname or '未设置'}。\n"
+                f"语气友好轻松，像朋友聊天。他不能创建文章和导出文件，只能浏览、搜索、推荐。"
+            )
+
+    now_str = _now().astimezone().strftime("%Y年%m月%d日 %H:%M")
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT + f"\n当前时间：{now_str}" + user_ctx},
+    ]
+    for msg in history:
+        role = "user" if msg.sender_type == 1 else "assistant"
+        messages.append({"role": role, "content": msg.content})
+
+    async def event_generator():
+        full_content = ""
+        current_messages = messages
+        tool_rounds = 0
+
+        try:
+            while tool_rounds < MAX_TOOL_ROUNDS:
+                tool_rounds += 1
+                accumulated_tool_calls: dict[int, dict] = {}  # index -> {name, args}
+                has_content = False
+
+                async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, read=20.0)) as client:
+                    request_json = {
+                        "model": AI_MODEL,
+                        "messages": current_messages,
+                        "stream": True,
+                    }
+                    # 根据用户角色过滤工具
+                    if tool_rounds <= MAX_TOOL_ROUNDS:
+                        user_tools = _filter_tools_for_user(db, user_id)
+                        request_json["tools"] = user_tools + _MCP_TOOLS
+                        request_json["tool_choice"] = "auto"
+
+                    async with client.stream(
+                        "POST",
+                        f"{AI_BASE_URL}/v1/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {AI_API_KEY}",
+                            "Content-Type": "application/json",
+                        },
+                        json=request_json,
+                    ) as response:
+                        async for line in response.aiter_lines():
+                            if not line.startswith("data: "):
+                                continue
+                            data_str = line[6:]
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(data_str)
+                                delta = chunk["choices"][0].get("delta", {})
+
+                                # 处理文本内容
+                                content = delta.get("content", "")
+                                if content:
+                                    has_content = True
+                                    full_content += content
+                                    yield f"event: message\ndata: {json.dumps({'text': content})}\n\n"
+                                    await asyncio.sleep(0.01)
+
+                                # 处理工具调用
+                                tc_list = delta.get("tool_calls")
+                                if tc_list:
+                                    for tc in tc_list:
+                                        idx = tc.get("index", 0)
+                                        if idx not in accumulated_tool_calls:
+                                            accumulated_tool_calls[idx] = {
+                                                "id": tc.get("id", ""),
+                                                "name": "",
+                                                "args": "",
+                                            }
+                                        entry = accumulated_tool_calls[idx]
+                                        if tc.get("id"):
+                                            entry["id"] = tc["id"]
+                                        if tc.get("function", {}).get("name"):
+                                            entry["name"] = tc["function"]["name"]
+                                        if tc.get("function", {}).get("arguments"):
+                                            entry["args"] += tc["function"]["arguments"]
+                            except (json.JSONDecodeError, KeyError, IndexError):
+                                continue
+
+                # 如果有工具调用，执行它们
+                if accumulated_tool_calls:
+                    # 构建 assistant 消息（含 tool_calls）
+                    assistant_msg = {"role": "assistant", "content": full_content or None}
+                    tc_formatted = []
+                    for idx in sorted(accumulated_tool_calls.keys()):
+                        tc = accumulated_tool_calls[idx]
+                        try:
+                            args_parsed = json.loads(tc["args"])
+                        except json.JSONDecodeError:
+                            args_parsed = {}
+                        tc_formatted.append({
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {"name": tc["name"], "arguments": tc["args"]},
+                        })
+                        # 发送 tool_call 事件
+                        yield f"event: tool_call\ndata: {json.dumps({'tool': tc['name'], 'args': args_parsed})}\n\n"
+                        await asyncio.sleep(0.01)
+
+                    if tc_formatted:
+                        assistant_msg["tool_calls"] = tc_formatted
+
+                    # 添加到消息历史
+                    current_messages = copy.deepcopy(current_messages)
+                    current_messages.append(assistant_msg)
+
+                    # 执行工具并发送 tool_result
+                    tool_names = {
+                        'search_articles': '搜索博客文章', 'get_article': '读取文章全文',
+                        'search_web': '联网搜索', 'get_categories': '查看分类',
+                        'recommend_articles': '推荐文章', 'read_url': '读取网页',
+                        'read_document': '读取文档', 'summarize_url': 'AI 摘要',
+                        'summarize_text': 'AI 摘要', 'export_file': '导出文件',
+                        'get_recent_articles': '获取最新文章', 'create_draft': '创建草稿',
+                    }
+                    for idx in sorted(accumulated_tool_calls.keys()):
+                        tc = accumulated_tool_calls[idx]
+                        try:
+                            args_parsed = json.loads(tc["args"])
+                        except json.JSONDecodeError:
+                            args_parsed = {}
+                        yield "event: message\n" + "data: " + status_msg + "\n\n"
+                        await asyncio.sleep(0.01)
+                        # MCP 工具分发
+                        if tc["name"].startswith("mcp_"):
+                            result = call_mcp_tool(tc["name"], args_parsed) or json.dumps({"error": "MCP 工具未找到"}, ensure_ascii=False)
+                        else:
+                            try:
+                                result = await asyncio.wait_for(
+                                    execute_tool(tc["name"], args_parsed, db),
+                                    timeout=15.0
+                                )
+                            except asyncio.TimeoutError:
+                                result = json.dumps({"error": "工具执行超时"}, ensure_ascii=False)
+                        yield f"event: tool_result\ndata: {json.dumps({'tool': tc['name'], 'result': json.loads(result) if result else {}})}\n\n"
+                        await asyncio.sleep(0.01)
+
+                        current_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": result,
+                        })
+
+                    # 继续循环让模型处理工具结果
+                    continue
+
+                # 没有工具调用，结束循环
+                break
+
+            # 保存完整回复
+            if full_content:
+                save_db = SessionLocal()
+                try:
+                    ai_msg = ConsultationMessage(
+                        session_id=sid_int,
+                        sender_type=2,
+                        content=full_content,
+                        ai_model=AI_MODEL,
+                        created_at=_now(),
+                    )
+                    save_db.add(ai_msg)
+                    save_db.commit()
+                finally:
+                    save_db.close()
+
+            yield "event: done\ndata: {}\n\n"
+
+        except httpx.HTTPError as e:
+            yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ── Export endpoints ──
+
+@router.get("/export")
+def export_session(
+    sessionId: str = Query(...),
+    format: str = Query("txt"),
+    token: str = Query(""),
+    db: Session = Depends(get_db),
+):
+    # 通过 token query 参数认证（兼容前端 window.open 调用）
+    if not token:
+        return {"code": "401", "msg": "未登录", "data": None}
+    try:
+        uid = verify_token(token)
+    except Exception:
+        return {"code": "401", "msg": "token无效", "data": None}
+
+    # 校验 sessionId 类型
+    try:
+        sid_int = int(sessionId)
+    except (ValueError, TypeError):
+        return {"code": "400", "msg": "会话ID格式错误", "data": None}
+
+    messages = (
+        db.query(ConsultationMessage)
+        .filter(ConsultationMessage.session_id == sid_int)
+        .order_by(ConsultationMessage.created_at.asc())
+        .all()
+    )
+    if not messages:
+        return {"code": "404", "msg": "无消息记录", "data": None}
+
+    # Build content
+    lines = ["# 对话导出", f"# 导出时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ""]
+    for msg in messages:
+        role = "用户" if msg.sender_type == 1 else "AI"
+        lines.append(f"## {role}")
+        lines.append(msg.content)
+        lines.append("")
+
+    text = "\n".join(lines)
+
+    if format == "txt":
+        return Response(
+            content=text,
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=chat_export.txt"},
+        )
+
+    if format == "md":
+        return Response(
+            content=text,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=chat_export.md"},
+        )
+
+    if format == "html":
+        html_lines = ["<!DOCTYPE html><html><head><meta charset='utf-8'><title>对话导出</title></head><body>"]
+        for msg in messages:
+            role = "用户" if msg.sender_type == 1 else "AI"
+            html_lines.append(f"<h3>{role}</h3>")
+            html_lines.append(f"<p>{msg.content.replace(chr(10), '<br>')}</p>")
+        html_lines.append("</body></html>")
+        return Response(
+            content="\n".join(html_lines),
+            media_type="text/html; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=chat_export.html"},
+        )
+
+    return {"code": "400", "msg": f"不支持的格式: {format}", "data": None}
+
+
+# ── AI 文档生成 ──
+
+@router.post("/generate-doc")
+async def generate_doc(request: Request):
+    body = await request.json()
+    topic = body.get("topic", "")
+    format_type = body.get("format", "txt")
+    if not topic:
+        return {"code": "400", "msg": "请提供主题", "data": None}
+
+    sys_prompt = (
+        "你是一个专业的内容整理助手。请根据用户提供的主题，整合、梳理并生成一份结构清晰的文档。\n"
+        "输出要求：\n"
+        "- 包含标题、小标题、分段内容\n"
+        "- 语言简洁专业，适合阅读和存档\n"
+        "- 用简体中文\n"
+        "- 纯文本格式，不要用 markdown 符号"
+    )
+    messages = [
+        {"role": "system", "content": sys_prompt},
+        {"role": "user", "content": f"请帮我整理以下内容并生成文档：\n{topic}"},
+    ]
+
+    full_content = ""
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{AI_BASE_URL}/v1/chat/completions",
+                headers={"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"},
+                json={"model": AI_MODEL, "messages": messages, "stream": False},
+            )
+            data = resp.json()
+            full_content = data["choices"][0]["message"]["content"]
+    except Exception as e:
+        return {"code": "500", "msg": f"生成失败: {str(e)}", "data": None}
+
+    if format_type == "txt":
+        return Response(content=full_content, media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=ai_doc.txt"})
+    if format_type == "md":
+        return Response(content=full_content, media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=ai_doc.md"})
+    return {"code": "400", "msg": f"不支持的格式: {format_type}", "data": None}

@@ -1,0 +1,8 @@
+---
+import AdminLayout from '@layouts/AdminLayout.astro';
+import CategoryManager from '@components/vue/CategoryManager.vue';
+---
+
+<AdminLayout title="分类管理">
+  <CategoryManager client:only="vue" />
+</AdminLayout>

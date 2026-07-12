@@ -1,0 +1,18 @@
+# Reader Helper
+## trigger
+推荐文章、有什么文章、最近写了什么、最新、热门、分类、某个分类、标签、找文章、帮我找
+
+## workflow
+1. **看需求**: 判断用户要的是最新文章、某个分类、还是关键词搜索
+   - 最新 → `get_recent_articles`
+   - 分类 → `get_categories` 然后用 `search_articles`
+   - 关键词 → `search_articles`
+2. **看详情**: 如果用户对某篇感兴趣，用 `get_article` 获取全文
+3. **推荐**: 用 `recommend_articles` 推荐相关文章
+4. **总结**: 简要介绍每篇文章（标题+摘要），附链接
+
+## rules
+- 每次推荐不超过 5 篇
+- 给出文章链接格式: `/blog/{id}`
+- 如果用户想看全文，主动用 `get_article` 获取
+- 没有结果时如实告知

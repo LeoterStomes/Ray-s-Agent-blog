@@ -1,0 +1,8 @@
+---
+import AdminLayout from '@layouts/AdminLayout.astro';
+import ArticleManager from '@components/vue/ArticleManager.vue';
+---
+
+<AdminLayout title="文章管理">
+  <ArticleManager client:only="vue" />
+</AdminLayout>

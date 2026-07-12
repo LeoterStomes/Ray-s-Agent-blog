@@ -1,0 +1,81 @@
+---
+import '@fontsource/inter/400.css';
+import '@fontsource/inter/500.css';
+import '@fontsource/inter/600.css';
+import '@fontsource/inter/700.css';
+import '@fontsource/noto-sans-sc/400.css';
+import '@fontsource/noto-sans-sc/500.css';
+import '@fontsource/noto-sans-sc/700.css';
+import '@styles/global.css';
+
+import Header from '@components/astro/Header.astro';
+import Footer from '@components/astro/Footer.astro';
+import SEO from '@components/astro/SEO.astro';
+import SearchOverlay from '@components/vue/SearchOverlay.vue';
+import AIChatWidget from '@components/vue/AIChatWidget.vue';
+import BlurControl from '@components/vue/BlurControl.vue';
+import { ViewTransitions } from 'astro:transitions';
+
+interface Props {
+  title?: string;
+  description?: string;
+  ogImage?: string;
+}
+
+const { title, description, ogImage } = Astro.props;
+const pageTitle = title ? `${title} - Ray的垃圾站` : 'Ray的垃圾站';
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <SEO title={pageTitle} description={description} ogImage={ogImage} />
+    <script>
+      // Global audio engine - survives ViewTransitions navigation
+      if (!window.__m) {
+        (function(){var a=null;window.__m={play:function(u,v,t){if(a){a.pause();a.remove();}a=new Audio(u);a.volume=v||0.7;if(t)a.currentTime=t;a.play().catch(function(){});},pause:function(){if(a)a.pause();},setVol:function(v){if(a)a.volume=v;},getAudio:function(){return a;},isPlaying:function(){return a?!a.paused:false;},getTime:function(){return a?a.currentTime||0:0;}}})();
+      }
+      // Dynamic background - survives ViewTransitions
+      (function(){
+        var cached = localStorage.getItem('_bgUrl');
+        function applyBg(url){
+          if(!url) return;
+          document.body.style.setProperty('background','url('+url+') center / cover fixed','important');
+          var overlay=document.getElementById('bg-overlay');
+          if(overlay) overlay.style.display='none';
+        }
+        // 优先用缓存（避免切换页面闪烁）
+        if(cached) applyBg(cached);
+        // 从服务端获取最新
+        fetch('/api/site/background').then(r=>r.json()).then(d=>{
+          if(d.data&&d.data.hasCustom&&d.data.url){
+            localStorage.setItem('_bgUrl', d.data.url);
+            applyBg(d.data.url);
+          } else {
+            localStorage.removeItem('_bgUrl');
+          }
+        }).catch(function(){});
+        // ViewTransitions 页面切换后重新应用
+        document.addEventListener('astro:after-swap', function(){
+          var url = localStorage.getItem('_bgUrl');
+          applyBg(url);  // url 为空则用默认白色，有则用壁纸
+        });
+      })();
+    </script>
+    <ViewTransitions />
+  </head>
+  <body class="min-h-screen flex flex-col">
+    <div id="bg-overlay"></div>
+    <Header />
+    <main class="flex-1 page-enter">
+      <slot />
+    </main>
+    <Footer />
+    <SearchOverlay client:only="vue" />
+    <AIChatWidget client:only="vue" />
+    <BlurControl client:only="vue" />
+  </body>
+</html>

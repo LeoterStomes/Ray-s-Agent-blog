@@ -1,0 +1,11 @@
+---
+import BaseLayout from '@layouts/BaseLayout.astro';
+import ProfileClient from '@components/vue/ProfileClient.vue';
+---
+
+<BaseLayout title="个人设置">
+  <section class="max-w-xl mx-auto px-4 sm:px-6 pt-12 pb-12">
+    <h1 class="text-3xl font-bold brand-text mb-8">个人设置</h1>
+    <ProfileClient client:load />
+  </section>
+</BaseLayout>

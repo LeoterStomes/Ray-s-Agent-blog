@@ -1,0 +1,14 @@
+---
+import BaseLayout from '@layouts/BaseLayout.astro';
+import ProjectList from '@components/vue/ProjectList.vue';
+---
+
+<BaseLayout title="项目">
+  <section class="max-w-6xl mx-auto px-4 sm:px-6 pt-12 pb-12">
+    <div class="mb-10">
+      <h1 class="text-3xl font-bold brand-text mb-2">项目</h1>
+      <p class="text-gray-500">GitHub 项目展示与归档</p>
+    </div>
+    <ProjectList client:only="vue" />
+  </section>
+</BaseLayout>

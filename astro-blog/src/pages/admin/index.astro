@@ -1,0 +1,8 @@
+---
+import AdminLayout from '@layouts/AdminLayout.astro';
+import AdminDashboard from '@components/vue/AdminDashboard.vue';
+---
+
+<AdminLayout title="仪表盘">
+  <AdminDashboard client:only="vue" />
+</AdminLayout>
