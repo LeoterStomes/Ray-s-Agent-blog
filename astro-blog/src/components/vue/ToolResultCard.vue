@@ -55,6 +55,18 @@
       <div class="result-header">搜索结果</div>
       <div class="web-results">{{ truncate(result.results, 200) }}</div>
     </template>
+    <!-- 脑图/HTML 内嵌 -->
+    <template v-else-if="isMindMap || isIframe">
+      <div class="mindmap-card">
+        <iframe :srcdoc="mindmapHtml" style="width:100%;height:400px;border:none;border-radius:8px" sandbox="allow-scripts allow-same-origin" />
+        <div class="mindmap-actions">
+          <a :href="result.url" target="_blank" class="mindmap-open-btn">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+            新窗口打开
+          </a>
+        </div>
+      </div>
+    </template>
     <!-- 计数结果 -->
     <template v-else-if="typeof result.count === 'number'">
       <div class="result-header">找到 {{ result.count }} 条结果</div>
@@ -72,6 +84,12 @@ import { computed } from 'vue';
 const props = defineProps<{ result: any }>();
 
 const isArticleList = computed(() => props.result?.articles?.length >= 0);
+const isMindMap = computed(() => !!(props.result?.iframe || props.result?.url?.includes('mindmap')));
+const isIframe = computed(() => !!(props.result?.iframe));
+const mindmapHtml = computed(() => {
+  if (props.result?.iframe) return props.result.iframe;
+  return `<iframe src="${props.result?.url}" width="100%" height="100%" style="border:none"></iframe>`;
+});
 const isExportFile = computed(() => {
   const fmt = (props.result?.format || '').toLowerCase().trim();
   const url = props.result?.url || '';
@@ -181,4 +199,20 @@ function truncate(s: string, n: number): string {
   flex-shrink: 0; transition: background .15s;
 }
 .export-dl-btn:hover { background: #15803d; }
+
+/* Mind map card */
+.mindmap-card {
+  margin: 8px 0; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden;
+  background: #fff;
+}
+.mindmap-actions {
+  display: flex; justify-content: flex-end; padding: 6px 10px;
+  background: #f8fafc; border-top: 1px solid #e2e8f0;
+}
+.mindmap-open-btn {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; color: #5b7bff; text-decoration: none;
+  padding: 3px 8px; border-radius: 6px; transition: background .15s;
+}
+.mindmap-open-btn:hover { background: #eff6ff; }
 </style>

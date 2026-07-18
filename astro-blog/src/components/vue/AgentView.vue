@@ -66,7 +66,7 @@
                       v-else-if="block.type === 'tool_call'"
                       :tool="block.tool || ''"
                       :args="block.args"
-                      :status="block.status"
+                      :status="fixStatus(block.status)"
                       @click="selectTool(bi, block)"
                     />
                     <!-- 导出文件内联卡 -->
@@ -148,15 +148,19 @@
         </div>
         <div v-else class="tool-history">
           <div
-            v-for="(t, i) in toolHistory"
-            :key="i"
+            v-for="(t, i) in visibleToolHistory"
+            :key="t.idx"
             class="tool-history-item"
-            :class="{ active: i === selectedToolIdx }"
-            @click="selectedToolIdx = i"
+            :class="{ active: t.idx === selectedToolIdx, newest: i === 0 }"
+            @click="selectedToolIdx = t.idx; selectedTool = toolHistory[t.idx]"
           >
             <span class="tool-dot" :class="t.status" />
             <span class="tool-name">{{ t.displayName }}</span>
+            <span v-if="i === 0 && t.status === 'running'" class="tool-running-badge">执行中</span>
           </div>
+          <button v-if="toolHistory.length > MAX_VISIBLE_TOOLS" @click="showAllTools = !showAllTools" class="toggle-tools-btn">
+            {{ showAllTools ? '收起' : `展开更多 (${toolHistory.length - MAX_VISIBLE_TOOLS} 项)` }}
+          </button>
         </div>
 
         <!-- Expanded result -->
@@ -192,7 +196,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import { $isLoggedIn } from '@lib/store';
 import { getToken } from '@lib/auth';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
@@ -201,14 +205,7 @@ import ThinkingCard from './ThinkingCard.vue';
 import ToolCallCard from './ToolCallCard.vue';
 import ToolResultCard from './ToolResultCard.vue';
 import ThinkingTyping from './ThinkingTyping.vue';
-
-const TOOL_NAMES: Record<string, string> = {
-  search_articles: '搜索文章',
-  get_article: '获取全文',
-  search_web: '联网搜索',
-  get_categories: '查看分类',
-  recommend_articles: '推荐文章',
-};
+import { TOOL_NAMES } from '@lib/toolNames';
 
 interface AgentBlock {
   type: string; text?: string; content?: string;
@@ -304,6 +301,14 @@ const msgContainer = ref<HTMLElement>();
 const textareaRef = ref<HTMLTextAreaElement>();
 const toolHistory = ref<ToolRecord[]>([]);
 const selectedToolIdx = ref(-1);
+const showAllTools = ref(false);
+const MAX_VISIBLE_TOOLS = 6;
+
+const visibleToolHistory = computed(() => {
+  // 反转：最新的在最前面
+  const reversed = toolHistory.value.map((t, i) => ({ ...t, idx: i })).reverse();
+  return showAllTools.value ? reversed : reversed.slice(0, MAX_VISIBLE_TOOLS);
+});
 
 const selectedTool = ref<ToolRecord | null>(null);
 
@@ -341,7 +346,13 @@ function selectTool(idx: number, block: AgentBlock) {
   }
 }
 
-function newSession() { sessionId.value = null; messages.value = []; toolHistory.value = []; selectedToolIdx.value = -1; }
+function newSession() {
+  sessionId.value = null;
+  messages.value = [];
+  toolHistory.value = [];
+  selectedToolIdx.value = -1;
+  localStorage.removeItem('agentSessionId');
+}
 
 async function deleteSession(id: string) {
   if (!confirm('确定删除这条对话？')) return;
@@ -351,9 +362,20 @@ async function deleteSession(id: string) {
     if (sessionId.value === id) { sessionId.value = null; messages.value = []; }
   } catch {}
 }
-function exportChat() {
+async function exportChat() {
   if (!sessionId.value) return;
-  window.open(`/api/psychological-chat/export?sessionId=${sessionId.value}&format=txt&token=${getToken()}`, '_blank');
+  try {
+    const token = getToken();
+    const resp = await fetch('/api/psychological-chat/export/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', token: token || '' },
+      body: JSON.stringify({ sessionId: sessionId.value, format: 'txt' }),
+    });
+    const j = await resp.json();
+    if (j.code === '200' && j.data?.downloadToken) {
+      window.open(`/api/psychological-chat/export?sessionId=${sessionId.value}&format=txt&dt=${j.data.downloadToken}`, '_blank');
+    }
+  } catch { /* */ }
 }
 
 function autoResize() {
@@ -372,6 +394,10 @@ function isExportResult(r: any): boolean {
 function renderMarkdown(content: string): string {
   if (!content) return '';
   return marked.parse(content, { breaks: true }) as string;
+}
+function fixStatus(s: string | undefined): 'done' | 'running' | 'error' | undefined {
+  if (s === 'done' || s === 'running' || s === 'error') return s;
+  return undefined;
 }
 
 async function sendMsg() {
@@ -571,6 +597,10 @@ async function scrollDown() {
 .tool-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .tool-dot.running { background: #f59e0b; animation: pulse 1s infinite; }
 .tool-dot.done { background: #16a34a; }
+.tool-history-item.newest { background: #fffbeb; }
+.tool-running-badge { font-size: 10px; padding: 1px 6px; border-radius: 10px; background: #fef3c7; color: #d97706; margin-left: auto; }
+.toggle-tools-btn { width: 100%; border: 1px dashed #e2e8f0; background: none; padding: 6px; border-radius: 8px; font-size: 12px; color: #94a3b8; cursor: pointer; }
+.toggle-tools-btn:hover { background: #f8fafc; color: #64748b; }
 @keyframes pulse { 50% { opacity: 0.5; } }
 .tool-detail { flex: 1; overflow-y: auto; border-top: 1px solid #e5e7eb; padding-top: 12px; }
 .tool-detail h4 { font-size: 13px; color: #475569; margin-bottom: 8px; }
@@ -648,4 +678,10 @@ async function scrollDown() {
   cursor: pointer; color: #94a3b8; display: flex; align-items: center; justify-content: center;
 }
 .history-toggle-btn:hover { color: #5b7bff; background: #f1f5f9; }
+
+/* ── Markdown 表格样式 ── */
+:deep(table) { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 12px; }
+:deep(th) { background: #f1f5f9; color: #475569; padding: 6px 10px; border: 1px solid #e2e8f0; text-align: left; font-weight: 600; }
+:deep(td) { padding: 5px 10px; border: 1px solid #e2e8f0; color: #334155; }
+:deep(tr:nth-child(even) td) { background: #f8fafc; }
 </style>

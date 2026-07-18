@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from database import get_db
+from auth import get_current_user_id
 from services.project_service import paginate, get_all, create, update, delete, fetch_readme
 from pydantic import BaseModel
 from typing import Optional
@@ -45,18 +46,18 @@ async def readme(url: str = Query(...)):
 
 
 @router.post("")
-def create_project(body: ProjectBody, db: Session = Depends(get_db)):
+def create_project(body: ProjectBody, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     cid = create(db, body.model_dump())
     return {"code": "200", "msg": "创建成功", "data": {"id": cid}}
 
 
 @router.put("/{pid}")
-def update_project(pid: int, body: ProjectUpdate, db: Session = Depends(get_db)):
+def update_project(pid: int, body: ProjectBody, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     update(db, pid, {k: v for k, v in body.model_dump().items() if v is not None})
     return {"code": "200", "msg": "更新成功", "data": None}
 
 
 @router.delete("/{pid}")
-def delete_project(pid: int, db: Session = Depends(get_db)):
+def delete_project(pid: int, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     delete(db, pid)
     return {"code": "200", "msg": "删除成功", "data": None}

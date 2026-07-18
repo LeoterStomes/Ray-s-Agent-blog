@@ -57,20 +57,13 @@ def update_profile(req: UserUpdateRequest, user_id: int = Depends(get_current_us
 
 @router.put("/password")
 def change_password(req: PasswordUpdateRequest, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    if not user_service.change_password(db, user_id, req.password):
-        return {"code": "500", "msg": "用户不存在", "data": None}
-    return {"code": "200", "msg": "操作成功", "data": None}
+    ok, msg = user_service.change_password(db, user_id, req.oldPassword or "", req.password)
+    if not ok:
+        return {"code": "400", "msg": msg, "data": None}
+    return {"code": "200", "msg": msg, "data": None}
 
 
-@router.get("/forget")
-def forget_password(email: str, newPassword: str, db: Session = Depends(get_db)):
-    from models import User
-    import bcrypt
-    user = db.query(User).filter(User.email == email).first()
-    if not user: return {"code": "500", "msg": "邮箱未注册", "data": None}
-    user.password = bcrypt.hashpw(newPassword.encode(), bcrypt.gensalt()).decode()
-    db.commit()
-    return {"code": "200", "msg": "操作成功", "data": None}
+# TODO: 实现安全的密码重置流程（生成重置链接 → 邮件发送 token → 验证后改密）
 
 
 @router.post("/logout")
@@ -85,6 +78,6 @@ def list_users(username: str = "", size: int = 50, db: Session = Depends(get_db)
 
 
 @router.put("/{user_id}/status")
-def update_status(user_id: int, status: int, db: Session = Depends(get_db)):
+def update_status(user_id_param: int, status: int, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     user_service.set_status(db, user_id, status)
     return {"code": "200", "msg": "操作成功", "data": None}

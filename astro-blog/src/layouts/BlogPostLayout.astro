@@ -1,5 +1,6 @@
 ---
 import FavoriteButton from '@components/vue/FavoriteButton.vue';
+import EditArticleBtn from '@components/vue/EditArticleBtn.vue';
 
 interface Props {
   articleId: string; title: string; coverImage?: string;
@@ -37,10 +38,13 @@ function fmt(d: Date) { return new Date(d).toLocaleDateString('zh-CN', { year:'n
   </div>
 
   <footer class="article-footer">
-    <a href="/blog" class="back-link">
-      <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
-      返回博客列表
-    </a>
+    <div class="footer-links">
+      <a href="/blog" class="back-link">
+        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        返回博客列表
+      </a>
+      <EditArticleBtn client:only="vue" articleId={articleId} />
+    </div>
   </footer>
 </article>
 
@@ -67,6 +71,7 @@ function fmt(d: Date) { return new Date(d).toLocaleDateString('zh-CN', { year:'n
 
   /* Footer */
   .article-footer { margin-top: 48px; padding-top: 24px; border-top: 1px solid #1e293b; }
+  .footer-links { display: flex; align-items: center; justify-content: space-between; }
   .back-link { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: #818cf8; font-weight: 500; text-decoration: none; transition: gap .2s; }
   .back-link:hover { gap: 10px; color: #a5b4fc; }
 

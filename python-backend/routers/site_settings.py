@@ -53,7 +53,7 @@ async def upload_background(
 
 
 @router.post("/background/reset")
-def reset_background():
+def reset_background(user_id: int = Depends(get_current_user_id), ):
     """恢复默认背景（删除自定义背景图）"""
     if os.path.exists(BG_DIR):
         for old in os.listdir(BG_DIR):

@@ -51,6 +51,18 @@ AI_BASE_URL = os.getenv("AI_BASE_URL", "https://api.deepseek.com")
 AI_MODEL = os.getenv("AI_MODEL", "deepseek-chat")
 
 # ========================================
+# RAG 嵌入模型配置 | Embedding Configuration
+# ========================================
+# EMBEDDING_PROVIDER: "local" 使用本地 BGE 模型（免费，需 sentence-transformers）
+#                     "openai" 使用 OpenAI 兼容 API（需 EMBEDDING_API_KEY）
+# EMBEDDING_MODEL: 本地默认 BAAI/bge-small-zh-v1.5（中文优化，~400MB）
+#                  云默认 text-embedding-3-small
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "local")
+EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", "")
+EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "https://api.openai.com/v1")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
+
+# ========================================
 # 邮件 SMTP 配置 | Email SMTP Configuration
 # ========================================
 # SMTP 服务器地址和端口

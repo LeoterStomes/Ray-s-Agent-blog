@@ -4,19 +4,31 @@
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>
       标签
     </h3>
+    <!-- 筛选输入 -->
+    <input
+      v-model="filter"
+      type="text"
+      placeholder="筛选标签..."
+      class="w-full px-3 py-1.5 mb-3 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-brand-500 focus:border-brand-500 outline-none"
+    />
     <div class="flex flex-wrap gap-2">
       <a
-        v-for="tag in tags"
+        v-for="tag in filteredTags"
         :key="tag.name"
         :href="`/blog?tag=${encodeURIComponent(tag.name)}`"
         class="px-2.5 py-1 rounded-full text-xs transition-all hover:scale-105"
         :class="tagSize(tag.count)"
         :style="{ backgroundColor: tagColor(tag.name), color: '#fff' }"
       >
-        {{ tag.name }}
+        {{ tag.name }}{{ tag.count > 1 ? ` (${tag.count})` : '' }}
       </a>
-      <p v-if="tags.length === 0" class="text-xs text-gray-400">暂无标签</p>
+      <p v-if="filteredTags.length === 0" class="text-xs text-gray-400">
+        {{ filter ? '无匹配标签' : '暂无标签' }}
+      </p>
     </div>
+    <p v-if="allTags.length > 20" class="text-[10px] text-gray-400 mt-2">
+      显示前 20 个标签（共 {{ allTags.length }} 个）
+    </p>
   </div>
 </template>
 
@@ -27,6 +39,7 @@ interface Tag { name: string; count: number }
 
 const props = defineProps<{ tags: Tag[] }>();
 const fetchedTags = ref<Tag[]>([]);
+const filter = ref('');
 
 async function fetchTags() {
   try {
@@ -51,9 +64,18 @@ onMounted(() => {
   if (props.tags.length === 0) fetchTags();
 });
 
-const tags = computed(() => {
+const allTags = computed(() => {
   const source = props.tags.length > 0 ? props.tags : fetchedTags.value;
   return [...source].sort((a, b) => b.count - a.count);
+});
+
+const filteredTags = computed(() => {
+  let result = allTags.value;
+  if (filter.value.trim()) {
+    const kw = filter.value.trim().toLowerCase();
+    result = result.filter(t => t.name.toLowerCase().includes(kw));
+  }
+  return result.slice(0, 20);
 });
 
 function tagSize(count: number) {

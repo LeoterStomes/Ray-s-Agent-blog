@@ -1,5 +1,5 @@
 """MCP Client — 连接外部 MCP Server，合并工具到 Agent"""
-import json, os, time, subprocess, threading, httpx
+import json, os, time, subprocess, threading, asyncio, httpx
 from typing import Optional
 
 
@@ -242,30 +242,41 @@ _servers: dict[str, MCPServer] = {}
 
 
 def load_mcp_servers() -> dict:
-    """从环境变量加载 MCP Server 配置并启动（支持 stdio 和 HTTP）"""
-    global _servers
-    config_str = os.getenv("MCP_SERVERS", "")
-    if not config_str:
-        return {}
+    """从环境变量加载 MCP Server 配置并启动（支持 stdio 和 HTTP）
 
-    for line in config_str.split("\n"):
-        line = line.strip()
-        if not line or line.startswith("#"):
+    支持两种配置方式：
+    1. MCP_SERVERS={"name":"xxx","command":"..."}  (单行 JSON)
+    2. MCP_SERVERS_0, MCP_SERVERS_1, ...         (编号)
+    """
+    global _servers
+    configs = []
+
+    # 方式 1: 单行 JSON
+    single = os.getenv("MCP_SERVERS", "")
+    if single.strip():
+        configs.append(single.strip())
+
+    # 方式 2: MCP_SERVERS_0, MCP_SERVERS_1, ...
+    for i in range(20):
+        val = os.getenv(f"MCP_SERVERS_{i}", "")
+        if val.strip():
+            configs.append(val.strip())
+
+    for cfg_str in configs:
+        if cfg_str.startswith("#"):
             continue
         try:
-            cfg = json.loads(line)
+            cfg = json.loads(cfg_str)
         except json.JSONDecodeError:
             continue
 
         name = cfg.get("name", "unknown")
 
-        # HTTP/SSE 传输
         if "url" in cfg:
             server = MCPHttpServer(name, cfg["url"])
             if server.start():
                 _servers[name] = server
 
-        # Stdio 传输
         elif "command" in cfg:
             command = cfg.get("command", "")
             args = cfg.get("args", "").split() if cfg.get("args") else []
@@ -287,9 +298,8 @@ def get_mcp_tools() -> list[dict]:
     return tools
 
 
-def call_mcp_tool(full_name: str, args: dict) -> Optional[str]:
-    """调用 MCP 工具"""
-    # full_name: "mcp_servername__toolname"
+async def call_mcp_tool(full_name: str, args: dict) -> Optional[str]:
+    """调用 MCP 工具（线程池执行，不阻塞事件循环）"""
     parts = full_name.split("__", 1)
     if len(parts) < 2:
         return None
@@ -297,7 +307,9 @@ def call_mcp_tool(full_name: str, args: dict) -> Optional[str]:
     server = _servers.get(server_name)
     if not server:
         return None
-    return server.call_tool(full_name, args)
+    # 在默认线程池中执行，避免阻塞事件循环
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, server.call_tool, full_name, args)
 
 
 def shutdown_mcp():

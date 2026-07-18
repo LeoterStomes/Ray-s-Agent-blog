@@ -1,0 +1,8 @@
+---
+import AdminLayout from '@layouts/AdminLayout.astro';
+import KnowledgeManager from '@components/vue/KnowledgeManager.vue';
+---
+
+<AdminLayout title="知识库管理">
+  <KnowledgeManager client:only="vue" />
+</AdminLayout>

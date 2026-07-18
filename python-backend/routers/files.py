@@ -19,6 +19,9 @@ os.makedirs(AVATAR_DIR, exist_ok=True)
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 
 
+MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5MB
+MAX_AGENT_FILE_SIZE = 20 * 1024 * 1024  # 20MB
+
 @router.post("/simple/upload/image")
 async def upload_avatar(
     file: UploadFile = File(...),
@@ -33,6 +36,8 @@ async def upload_avatar(
     filepath = os.path.join(AVATAR_DIR, filename)
 
     content = await file.read()
+    if len(content) > MAX_IMAGE_SIZE:
+        return {"code": "400", "msg": "文件不超过 5MB", "data": None}
     with open(filepath, "wb") as f:
         f.write(content)
 
@@ -53,13 +58,13 @@ os.makedirs(AGENT_UPLOAD_DIR, exist_ok=True)
 @router.post("/upload/agent")
 async def upload_agent_file(file: UploadFile = File(...)):
     """Agent 文件上传 — 支持 PDF/DOCX/图片/文本等"""
+    content = await file.read()
+    if len(content) > MAX_AGENT_FILE_SIZE:
+        return {"code": "400", "msg": "文件不超过 20MB", "data": None}
     ext = os.path.splitext(file.filename or "file")[1].lower()
-    # 保留原始文件名以便 Agent 识别类型
     safe_name = file.filename or "file"
     filename = f"{uuid.uuid4().hex}_{safe_name}"
     filepath = os.path.join(AGENT_UPLOAD_DIR, filename)
-
-    content = await file.read()
     with open(filepath, "wb") as f:
         f.write(content)
 

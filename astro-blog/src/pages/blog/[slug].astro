@@ -2,9 +2,11 @@
 export const prerender = false;
 import BaseLayout from '@layouts/BaseLayout.astro';
 import BlogPostLayout from '@layouts/BlogPostLayout.astro';
+import CommentSection from '@components/vue/CommentSection.vue';
 
 const slug = Astro.params.slug;
-const apiUrl = `http://localhost:1235/api/knowledge/article/${slug}`;
+const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:1235';
+const apiUrl = `${API_BASE}/api/knowledge/article/${slug}`;
 
 let article: any = {}, notFound = false;
 try {
@@ -45,7 +47,7 @@ if (toc.length > 0) {
 // Related
 let related: any[] = [];
 try {
-  const r = await fetch(`http://localhost:1235/api/knowledge/article/page?status=1&size=4&categoryId=${article.categoryId||''}`);
+  const r = await fetch(`${API_BASE}/api/knowledge/article/page?status=1&size=4&categoryId=${article.categoryId||''}`);
   const j = await r.json();
   if (j.code==='200' && j.data?.records) related = j.data.records.filter((x:any) => x.id!==article.id).slice(0,3);
 } catch {}
@@ -86,6 +88,7 @@ try {
                 categoryName={categoryName} tags={tags} publishedAt={publishedAt} readTime={readTime}>
                 <Fragment set:html={contentWithIds} />
               </BlogPostLayout>
+              <CommentSection client:only="vue" articleId={article.id||''} />
             </div>
           </div>
 

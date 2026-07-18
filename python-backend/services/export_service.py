@@ -138,6 +138,15 @@ def export_docx(title: str, content: str) -> dict:
     return {"filename": filename, "url": f"/uploads/export/{filename}", "type": "docx"}
 
 
+def export_html(title: str, content: str) -> dict:
+    """保存原始 HTML 文件"""
+    filename = f"{_sanitize_filename(title)}_{uuid.uuid4().hex[:6]}.html"
+    filepath = os.path.join(EXPORT_DIR, filename)
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(content)
+    return {"filename": filename, "url": f"/uploads/export/{filename}", "type": "html"}
+
+
 def export_txt(title: str, content: str) -> dict:
     """Generate TXT, return {url, filename}"""
     filename = f"{_sanitize_filename(title)}_{uuid.uuid4().hex[:6]}.txt"

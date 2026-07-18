@@ -26,6 +26,14 @@ ALL_TOOLS = list(TOOLS_SCHEMA) + _MCP_TOOLS
 
 router = APIRouter(prefix="/api/psychological-chat", tags=["AI聊天"])
 
+# ── 加载 System Prompt ──
+_PROMPT_FILE = Path(__file__).parent.parent / "system_prompt.md"
+
+def _load_system_prompt() -> str:
+    if _PROMPT_FILE.exists():
+        return _PROMPT_FILE.read_text(encoding="utf-8")
+    return "你是 Ray 个人博客的 AI 助手。"
+
 # ── 加载 Skills ──
 def _load_skills() -> str:
     skills_dir = Path(__file__).parent.parent / "skills"
@@ -43,51 +51,14 @@ def _load_skills() -> str:
 
 SKILLS_TEXT = _load_skills()
 
-SYSTEM_PROMPT = (
-    "你是 Ray 个人博客（Ray的垃圾站）的 AI 助手。\n"
-    "重要：所有与你对话的用户都是已登录用户（未登录无法使用 AI 助手）。\n"
-    "系统消息中会包含当前用户的用户名、昵称和身份信息，请据此个性化回复。\n\n"
-    "## 你的能力\n"
-    "- 搜索博客文章、读取全文、推荐相关内容、查看分类\n"
-    "- 联网搜索最新信息\n"
-    "- 读取网页和 PDF/DOCX 文档\n"
-    "- AI 摘要总结\n"
-    "- 创建文章草稿\n"
-    "- 导出文件：PDF、Word(DOCX)、TXT\n\n"
-    "## 博客功能介绍\n"
-    "博客有以下功能，用户问到时请据此说明：\n"
-    "- **首页**：最新文章列表 + 轮播推荐 + 侧边栏（博主信息/公告/音乐/日期/统计/标签云）\n"
-    "- **文章页**（/blog）：所有文章列表，支持分类筛选\n"
-    "- **文章详情**：左侧目录导航 + 中间正文 + 右侧推荐文章\n"
-    "- **AI 小助手**：右下角浮窗（快捷问答），点标题栏的展开图标可打开全屏 Agent 页面（/agent）\n"
-    "- **Agent 全屏页**（/agent）：左侧历史对话 + 中间对话区 + 右侧工具面板，支持拖拽上传文件\n"
-    "- **编辑器**（/editor）：写文章，支持 Markdown 快捷输入和图片粘贴\n"
-    "- **项目页**（/projects）：展示博主的项目\n"
-    "- **收藏**（/favorites）：用户收藏的文章\n"
-    "- **登录/注册**（/auth/login）：邮箱验证码注册\n"
-    "- **管理后台**（/admin）：仅管理员可访问，管理文章/分类/项目/音乐/公告/用户/背景壁纸\n\n"
-    "## 工具使用规则\n"
-    "1. 当用户询问博客内容或需要查找信息时，主动调用工具获取准确数据。\n"
-    "2. 可多次调用工具，例如先搜索文章再获取全文，或先搜索再联网补充。\n"
-    "3. **自动联网兜底**：当 search_articles 返回空结果或结果不相关时，必须立即调用 search_web 联网搜索，不要把本地无结果当作最终答案。\n"
-    "4. 回答时引用文章标题并附链接（格式：/blog/{id}），联网结果标注来源 URL。\n"
-    "5. 工具返回空结果时如实告知，不要编造内容。\n"
-    "6. 用户问\"你能做什么\"或\"有什么功能\"时，列出以上博客功能 + 你的 AI 能力。\n\n"
-    "## 回答风格\n"
-    "直接、简洁，用简体中文。\n"
-    "首次对话用一句话打招呼，之后不再重复。\n"
-    "对管理员：用\"您\"称呼，语气尊重服从，主动询问需要什么帮助，像得力助手。\n"
-    "对普通用户：轻松友好，像朋友聊天，用\"你\"称呼。\n"
-    "结合工具返回的实际数据回答，而非泛泛而谈。"
-)
+SYSTEM_PROMPT = _load_system_prompt()
+MAX_TOOL_ROUNDS = 20  # 兜底值，正常由 Prompt 引导模型自行决定停止时机
 
 # 注入 Skills
 if SKILLS_TEXT:
     SYSTEM_PROMPT += "\n\n## 可用专业技能 (Skills)\n"
     SYSTEM_PROMPT += "根据用户意图匹配对应 Skill，按 Skill 定义的 workflow 顺序调用工具：\n\n"
     SYSTEM_PROMPT += SKILLS_TEXT
-
-MAX_TOOL_ROUNDS = 10  # 安全上限（正常情况模型会自己决定停止）
 
 # ── 权限控制 ──
 WRITE_TOOLS = {"create_draft", "export_file"}  # 仅 admin(user_type=2) 可用的工具
@@ -102,8 +73,8 @@ def _filter_tools_for_user(db: Session, user_id: int) -> list[dict]:
     return [t for t in TOOLS_SCHEMA if t["function"]["name"] not in WRITE_TOOLS]
 
 def _now():
-    """返回当前 UTC 时间（naive，MySQL 兼容）"""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    """返回当前本地时间（naive，MySQL 兼容）"""
+    return datetime.now(timezone.utc).astimezone().replace(tzinfo=None)
 
 
 @router.post("/session/start")
@@ -242,7 +213,15 @@ async def stream_chat(
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    body = await request.json()
+    raw_body = await request.body()
+    try:
+        body = json.loads(raw_body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        # Windows 终端/curl 可能发送 GBK 编码的中文，尝试回退解码
+        try:
+            body = json.loads(raw_body.decode("gbk", errors="replace"))
+        except Exception:
+            body = json.loads(raw_body.decode("latin-1", errors="replace"))
     session_id = body.get("sessionId", "")
     user_message = body.get("userMessage", "")
 
@@ -272,40 +251,55 @@ async def stream_chat(
     db.add(user_msg)
     db.commit()
 
-    # Load history
-    history = (
+    # Load history — 滑动窗口：最近5条原文 + 之前压缩为摘要
+    all_history = (
         db.query(ConsultationMessage)
         .filter(ConsultationMessage.session_id == sid_int)
-        .order_by(ConsultationMessage.created_at.asc())
+        .order_by(ConsultationMessage.created_at.desc())
         .all()
-    )
+    )[::-1]
 
-    # 获取当前用户信息
     from models import User
     current_user = db.query(User).filter(User.id == user_id).first()
     user_ctx = ""
     if current_user:
         if current_user.user_type == 2:
             user_ctx = (
-                f"\n## 当前用户（管理员）\n"
+                f"\n## 当前用户（博主/管理员）\n"
                 f"用户名: {current_user.username}，昵称: {current_user.nickname or '未设置'}。\n"
-                f"这是博客的站长/管理员，拥有最高权限。语气要尊重、积极、服从。\n"
-                f"主动提供帮助，用\"您\"称呼，管理类操作（创建文章、导出文件等）他都可以使用。"
+                f"这是博客的站长，最高权限。像私人助理对老板：用\"您\"，专业高效，\n"
+                f"主动汇报站点情况、提出运营建议、快速执行指令。"
             )
         else:
             user_ctx = (
-                f"\n## 当前用户（普通读者）\n"
+                f"\n## 当前用户（读者）\n"
                 f"用户名: {current_user.username}，昵称: {current_user.nickname or '未设置'}。\n"
-                f"语气友好轻松，像朋友聊天。他不能创建文章和导出文件，只能浏览、搜索、推荐。"
+                f"像热情的导览员对访客：用\"你\"，亲切友好，\n"
+                f"主动推荐好文章、耐心解答问题、引导探索博客。"
             )
 
-    now_str = _now().astimezone().strftime("%Y年%m月%d日 %H:%M")
+    now_str = _now().strftime("%Y年%m月%d日 %H:%M (星期%w)").replace('星期0','周日').replace('星期1','周一').replace('星期2','周二').replace('星期3','周三').replace('星期4','周四').replace('星期5','周五').replace('星期6','周六')
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT + f"\n当前时间：{now_str}" + user_ctx},
     ]
-    for msg in history:
-        role = "user" if msg.sender_type == 1 else "assistant"
-        messages.append({"role": role, "content": msg.content})
+
+    KEEP_RECENT = 5
+    if len(all_history) > KEEP_RECENT:
+        older = all_history[:-KEEP_RECENT]
+        recent = all_history[-KEEP_RECENT:]
+        lines = ["[历史摘要，仅供参考，只回复最新消息]"]
+        for m in older:
+            role = "用户" if m.sender_type == 1 else "AI"
+            preview = (m.content or "")[:80].replace("\n", " ")
+            lines.append(f"{role}: {preview}")
+        messages.append({"role": "system", "content": "\n".join(lines)})
+        for msg in recent:
+            role = "user" if msg.sender_type == 1 else "assistant"
+            messages.append({"role": role, "content": msg.content})
+    else:
+        for msg in all_history:
+            role = "user" if msg.sender_type == 1 else "assistant"
+            messages.append({"role": role, "content": msg.content})
 
     async def event_generator():
         full_content = ""
@@ -318,7 +312,7 @@ async def stream_chat(
                 accumulated_tool_calls: dict[int, dict] = {}  # index -> {name, args}
                 has_content = False
 
-                async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, read=20.0)) as client:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, read=45.0)) as client:
                     request_json = {
                         "model": AI_MODEL,
                         "messages": current_messages,
@@ -420,11 +414,9 @@ async def stream_chat(
                             args_parsed = json.loads(tc["args"])
                         except json.JSONDecodeError:
                             args_parsed = {}
-                        yield "event: message\n" + "data: " + status_msg + "\n\n"
-                        await asyncio.sleep(0.01)
                         # MCP 工具分发
                         if tc["name"].startswith("mcp_"):
-                            result = call_mcp_tool(tc["name"], args_parsed) or json.dumps({"error": "MCP 工具未找到"}, ensure_ascii=False)
+                            result = await call_mcp_tool(tc["name"], args_parsed) or json.dumps({"error": "MCP 工具未找到"}, ensure_ascii=False)
                         else:
                             try:
                                 result = await asyncio.wait_for(
@@ -448,6 +440,30 @@ async def stream_chat(
                 # 没有工具调用，结束循环
                 break
 
+            # 如果没有文本输出（一直调工具），强制做最后一轮总结
+            if not full_content and current_messages:
+                summary_msg = [{"role": "system", "content": "结合以上工具执行结果，用简体中文给出简洁的最终回答。不要调用任何工具。"}]
+                try:
+                    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=25.0)) as client:
+                        async with client.stream(
+                            "POST", f"{AI_BASE_URL}/v1/chat/completions",
+                            headers={"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"},
+                            json={"model": AI_MODEL, "messages": current_messages + summary_msg, "stream": True},
+                        ) as response:
+                            async for line in response.aiter_lines():
+                                if not line.startswith("data: "): continue
+                                data_str = line[6:]
+                                if data_str == "[DONE]": break
+                                try:
+                                    chunk = json.loads(data_str)
+                                    text = chunk["choices"][0].get("delta", {}).get("content", "")
+                                    if text:
+                                        full_content += text
+                                        yield f"event: message\ndata: {json.dumps({'text': text})}\n\n"
+                                        await asyncio.sleep(0.01)
+                                except: pass
+                except: pass
+
             # 保存完整回复
             if full_content:
                 save_db = SessionLocal()
@@ -466,10 +482,10 @@ async def stream_chat(
 
             yield "event: done\ndata: {}\n\n"
 
-        except httpx.HTTPError as e:
-            yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
-        except Exception as e:
-            yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
+        except httpx.HTTPError:
+            yield f"event: error\ndata: {json.dumps({'message': 'AI 服务连接异常，请稍后重试'})}\n\n"
+        except Exception:
+            yield f"event: error\ndata: {json.dumps({'message': '服务暂时不可用，请稍后重试'})}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -484,20 +500,39 @@ async def stream_chat(
 
 # ── Export endpoints ──
 
+# 一次性下载令牌（避免 JWT 走 URL）
+_download_tokens: dict[str, dict] = {}
+
+@router.post("/export/token")
+def create_export_token(
+    sessionId: str,
+    format: str = "txt",
+    user_id: int = Depends(get_current_user_id),
+):
+    """生成一次性下载令牌（60秒有效，用完即删）"""
+    import secrets, time
+    dt = secrets.token_urlsafe(24)
+    _download_tokens[dt] = {"sessionId": sessionId, "format": format, "expires": time.time() + 60}
+    return {"code": "200", "msg": "ok", "data": {"downloadToken": dt}}
+
+
 @router.get("/export")
 def export_session(
     sessionId: str = Query(...),
     format: str = Query("txt"),
-    token: str = Query(""),
+    dt: str = Query(""),
     db: Session = Depends(get_db),
 ):
-    # 通过 token query 参数认证（兼容前端 window.open 调用）
-    if not token:
-        return {"code": "401", "msg": "未登录", "data": None}
-    try:
-        uid = verify_token(token)
-    except Exception:
-        return {"code": "401", "msg": "token无效", "data": None}
+    # 优先用一次性下载令牌，兼容旧 JWT 参数
+    import time
+    entry = _download_tokens.pop(dt, None) if dt else None
+    if entry and time.time() < entry["expires"]:
+        sessionId = entry.get("sessionId", sessionId)
+        format = entry.get("format", format)
+    elif dt:
+        return {"code": "401", "msg": "下载链接已过期，请重新生成", "data": None}
+    else:
+        return {"code": "401", "msg": "请通过 Agent 页面重新导出", "data": None}
 
     # 校验 sessionId 类型
     try:

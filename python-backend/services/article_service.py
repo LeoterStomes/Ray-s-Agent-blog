@@ -4,6 +4,28 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from models import KnowledgeArticle, UserFavorite
 
+def _sync_rag(article_id: str, article=None):
+    """同步文章到 RAG 向量库。成功→索引，失败→静默跳过（不阻塞发布流程）"""
+    try:
+        from services.rag_service import index_article, delete_article
+        if article is None:
+            # 下架/删除 → 从向量库移除
+            delete_article(article_id)
+        else:
+            # 发布/更新 → 重建索引
+            index_article(
+                article_id=article.id,
+                title=article.title,
+                content=article.content or "",
+                summary=article.summary or "",
+                category=article.category.category_name if article.category else "",
+                tags=article.tags or "",
+                published_at=article.published_at.isoformat() if article.published_at else "",
+                read_count=article.read_count or 0,
+            )
+    except Exception:
+        pass  # RAG 未就绪时不影响正常流程
+
 def _article_to_dict(article, user_id=None) -> dict:
     """将文章模型转换为字典，可选附带当前用户的收藏状态"""
     is_fav = False
@@ -108,6 +130,8 @@ def update_article(db: Session, article_id: str, data: dict):
     if "categoryId" in data:
         a.category_id = data["categoryId"] or None
     db.commit()
+    # 重新索引（内容已变）
+    _sync_rag(article_id, a)
     return True
 
 def set_status(db: Session, article_id: str, status: int):
@@ -117,6 +141,11 @@ def set_status(db: Session, article_id: str, status: int):
         if status == 1 and not a.published_at:
             a.published_at = datetime.now(timezone.utc)
         db.commit()
+        # 发布→索引，下架→删除
+        if status == 1:
+            _sync_rag(article_id, a)
+        else:
+            _sync_rag(article_id, None)
     return a is not None
 
 def delete(db: Session, article_id: str):
@@ -124,4 +153,5 @@ def delete(db: Session, article_id: str):
     if a:
         db.delete(a)
         db.commit()
+        _sync_rag(article_id, None)
     return a is not None

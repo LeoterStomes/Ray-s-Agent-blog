@@ -3,51 +3,67 @@
 写文章、起草、帮我写、生成文章、写一篇、投稿、发布文章、create article、write post
 
 ## workflow
-1. **查重**: 用 `search_articles` 搜索博客是否已有类似话题，避免重复
-2. **找分类**: 用 `get_categories` 确认应该放哪个分类
-3. **找素材**: 用 `search_web` 搜索最新相关信息作为参考
-4. **生成**: 用 `create_draft` 创建草稿，content 用 HTML 格式
-5. **告知**: 返回草稿链接，建议用户去编辑器完善
+1. **查重**: 用 `search_articles` 避免重复
+2. **找分类**: 用 `get_categories` 确定分类
+3. **找素材**: 用 `search_web` 搜最新信息
+4. **生成**: 用 `create_draft` 创建草稿，content 严格按下方 HTML 模板（深色主题）
+5. **告知**: 返回草稿链接
 
-## 输出格式（必须严格遵守）
-生成 content 时，必须使用以下 HTML 标签格式化，确保文章美观：
+## HTML 模板（深色主题，禁止 Markdown）
 
+### 表格
 ```html
-<h2>章节标题</h2>
-<h3>小标题</h3>
-
-<p>正文段落...</p>
-
-<blockquote>引用或重点提示</blockquote>
-
-<pre><code>
-代码块内容（保持缩进）
-</code></pre>
-
-<ul>
-  <li>要点一</li>
-  <li>要点二</li>
-</ul>
-
-<ol>
-  <li>第一步</li>
-  <li>第二步</li>
-</ol>
-
-<table>
-  <tr><th>列A</th><th>列B</th></tr>
-  <tr><td>数据1</td><td>数据2</td></tr>
+<table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px">
+  <thead><tr style="background:#1e293b;color:#e2e8f0">
+    <th style="padding:10px 14px;border:1px solid #334155;text-align:left">列名</th>
+  </tr></thead>
+  <tbody><tr style="background:#0f172a">
+    <td style="padding:8px 14px;border:1px solid #1e293b;color:#cbd5e1">数据</td>
+  </tr></tbody>
 </table>
-
-<p><strong>加粗强调</strong> 和 <em>斜体</em></p>
 ```
 
+### 提示卡片
+```html
+<div style="background:#1e1b4b;border-left:4px solid #6366f1;padding:12px 16px;margin:16px 0;border-radius:0 8px 8px 0;color:#c7d2fe">
+  <strong>📌 要点</strong><p style="color:#a5b4fc;margin:4px 0">内容</p>
+</div>
+```
+
+### 代码块
+```html
+<pre style="background:#0f172a;color:#e2e8f0;padding:16px 20px;border-radius:8px;overflow-x:auto;border:1px solid #1e293b"><code>code here</code></pre>
+```
+
+### 引用
+```html
+<blockquote style="border-left:3px solid #6366f1;background:#1e1b4b;padding:10px 16px;margin:12px 0;border-radius:0 8px 8px 0;color:#c7d2fe">引用</blockquote>
+```
+
+### 列表和分隔
+```html
+<ul style="color:#e2e8f0"><li>要点</li></ul>
+<hr style="border:none;border-top:1px solid #1e293b;margin:24px 0">
+```
+
+## 展示结构化内容
+优先使用以下方式，脑图仅作为补充手段：
+- **大纲列表**：用 <ul><li> 嵌套展示层级结构
+- **对比表格**：数据对比/方案对比用 <table>
+- **信息卡片**：重点用 <div> 卡片（蓝色左边框）
+- **分步骤**：用 <ol> 编号列表
+- **时间线**：用表格或有序列表
+- **思维导图**：仅当内容结构复杂（4层级以上）或用户明确要求时才生成。
+  **必须实际调用 `make_mindmap` 工具**（不是 MCP 版），得到返回的 `url` 和 `iframe`。
+  将 iframe 代码**原样写入 content**，不要自己编造 url 或只写文字说"已生成"——那是在撒谎。
+  示例：content 中必须包含 `<iframe src="/uploads/export/mindmap_xxxx.html" width="100%" height="500" style="border:none;border-radius:8px;margin:16px 0"></iframe>`
+  **严禁**同时调用两个脑图工具。
+
 ## rules
-- 标题 <h1> 已由系统渲染，正文从 <h2> 开始
-- **禁止使用 Markdown**（# ## ``` 等），必须用 HTML
-- 每个 <h2> 章节约 300-500 字
-- <h2> 之间用 <hr> 分隔视觉区块
-- 引用来源用 <blockquote> 包裹
-- 代码用 <pre><code> 包裹
-- 至少使用 2 种以上元素（列表/引用/代码块/表格）
-- 如果已有类似文章，建议改写角度
+- 标题从 <h2> 开始
+- 表格必须有 thead/tbody，带内联样式
+- 技术文章必须有代码块
+- 每 2-3 段插入卡片/引用/列表
+- 脑图用 make_mindmap（不是 MCP 版本），只调一次
+- 末尾附 <hr> + 参考来源
+- 颜色全部用深色主题色值

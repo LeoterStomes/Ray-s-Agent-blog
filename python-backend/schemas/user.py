@@ -18,6 +18,7 @@ class UserUpdateRequest(BaseModel):
     bio: Optional[str] = None
 
 class PasswordUpdateRequest(BaseModel):
+    oldPassword: str = ""
     password: str = Field(alias="password")
 
 class UserResponse(BaseModel):

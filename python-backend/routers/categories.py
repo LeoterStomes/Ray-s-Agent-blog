@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from database import get_db
+from auth import get_current_user_id
 from services.category_service import get_tree, get_all, create, update, delete
 from pydantic import BaseModel
 from typing import Optional
@@ -25,18 +26,18 @@ def all_categories(db: Session = Depends(get_db)):
 
 
 @router.post("")
-def create_category(body: CategoryBody, db: Session = Depends(get_db)):
+def create_category(body: CategoryBody, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     cid = create(db, body.model_dump())
     return {"code": "200", "msg": "创建成功", "data": {"id": cid}}
 
 
 @router.put("/{cid}")
-def update_category(cid: int, body: CategoryBody, db: Session = Depends(get_db)):
+def update_category(cid: int, body: CategoryBody, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     update(db, cid, body.model_dump())
     return {"code": "200", "msg": "更新成功", "data": None}
 
 
 @router.delete("/{cid}")
-def delete_category(cid: int, db: Session = Depends(get_db)):
+def delete_category(cid: int, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     delete(db, cid)
     return {"code": "200", "msg": "删除成功", "data": None}

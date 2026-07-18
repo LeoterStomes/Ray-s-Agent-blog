@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from database import get_db
+from auth import get_current_user_id
 from services.announcement_service import get_list, get_all, create, update, delete
 from pydantic import BaseModel
 from typing import Optional
@@ -32,18 +33,18 @@ def all_announcements(db: Session = Depends(get_db)):
 
 
 @router.post("")
-def create_announcement(body: AnnouncementBody, db: Session = Depends(get_db)):
+def create_announcement(body: AnnouncementBody, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     create(db, body.model_dump())
     return {"code": "200", "msg": "创建成功", "data": None}
 
 
 @router.put("/{aid}")
-def update_announcement(aid: int, body: AnnouncementUpdate, db: Session = Depends(get_db)):
+def update_announcement(aid: int, body: AnnouncementUpdate, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     update(db, aid, {k: v for k, v in body.model_dump().items() if v is not None})
     return {"code": "200", "msg": "更新成功", "data": None}
 
 
 @router.delete("/{aid}")
-def delete_announcement(aid: int, db: Session = Depends(get_db)):
+def delete_announcement(aid: int, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     delete(db, aid)
     return {"code": "200", "msg": "删除成功", "data": None}

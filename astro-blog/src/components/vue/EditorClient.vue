@@ -89,6 +89,8 @@ const success = ref('');
 const categories = ref<any[]>([]);
 const editorRef = ref<HTMLElement>();
 
+const editId = ref<string | null>(null);
+
 onMounted(async () => {
   loggedIn.value = $isLoggedIn.get();
   try {
@@ -96,6 +98,24 @@ onMounted(async () => {
     const j = await r.json();
     if (j.code === '200') categories.value = j.data;
   } catch { /* */ }
+  // 支持 ?id=xxx 参数预加载已有文章
+  const params = new URLSearchParams(window.location.search);
+  const aid = params.get('id');
+  if (aid && loggedIn.value) {
+    try {
+      const resp = await fetch(`/api/knowledge/article/${aid}`);
+      const j = await resp.json();
+      if (j.code === '200' && j.data) {
+        editId.value = aid;
+        title.value = j.data.title || '';
+        categoryId.value = j.data.categoryId || 0;
+        tags.value = (j.data.tags || '').replace(/,/g, ', ');
+        if (editorRef.value) {
+          editorRef.value.innerHTML = j.data.content || '';
+        }
+      }
+    } catch { /* */ }
+  }
 });
 
 function execCmd(cmd: string, arg?: string) {
@@ -725,23 +745,44 @@ async function saveArticle(status: number) {
       summary: editorRef.value?.textContent?.trim().slice(0, 200) || '',
       tags: tags.value.split(/[,，]/).map(t => t.trim()).filter(Boolean).join(','),
     });
-    const res = await fetch('/api/knowledge/article', {
-      method: 'POST', headers: { 'Content-Type': 'application/json', token: getToken() || '' }, body,
-    });
-    const j = await res.json();
-    if (j.code === '200') {
-      const articleId = j.data?.id;
-      if (status === 1) {
-        await fetch(`/api/knowledge/article/${articleId}/publish`, {
-          method: 'POST', headers: { token: getToken() || '' },
-        });
-        showToast('发布成功！');
-        setTimeout(() => { window.location.href = `/blog/${articleId}`; }, 800);
+    let articleId = editId.value;
+    if (editId.value) {
+      // 更新已有文章
+      const res = await fetch(`/api/knowledge/article/${editId.value}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', token: getToken() || '' }, body,
+      });
+      const j = await res.json();
+      if (j.code === '200') {
+        if (status === 1) {
+          await fetch(`/api/knowledge/article/${editId.value}/publish`, {
+            method: 'POST', headers: { token: getToken() || '' },
+          });
+        }
+        showToast(status === 1 ? '已更新并发布！' : '已保存');
+        if (status === 1) setTimeout(() => { window.location.href = `/blog/${editId.value}`; }, 800);
       } else {
-        showToast('草稿已保存');
+        showToast('保存失败');
       }
     } else {
-      showToast('保存失败');
+      // 新建文章
+      const res = await fetch('/api/knowledge/article', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', token: getToken() || '' }, body,
+      });
+      const j = await res.json();
+      if (j.code === '200') {
+        articleId = j.data?.id;
+        if (status === 1) {
+          await fetch(`/api/knowledge/article/${articleId}/publish`, {
+            method: 'POST', headers: { token: getToken() || '' },
+          });
+          showToast('发布成功！');
+          setTimeout(() => { window.location.href = `/blog/${articleId}`; }, 800);
+        } else {
+          showToast('草稿已保存');
+        }
+      } else {
+        showToast('保存失败');
+      }
     }
   } catch { /* */ }
   saving.value = false;

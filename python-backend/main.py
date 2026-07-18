@@ -2,13 +2,14 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from rate_limit import RateLimitMiddleware
 
 from database import SessionLocal, engine, Base
 from models import *  # noqa — 确保所有模型注册到 Base
 Base.metadata.create_all(bind=engine)
 
 from services.visitor_service import stats as visitor_stats_func, ping as visitor_ping_func
-from routers import users, articles, categories, favorites, chat, files, announcements, music, projects, captcha, email, site_settings
+from routers import users, articles, categories, favorites, chat, files, announcements, music, projects, captcha, email, site_settings, comments, rag
 
 _ALLOWED_ORIGINS = os.getenv(
     "CORS_ORIGINS",
@@ -25,6 +26,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(RateLimitMiddleware)
+
 app.include_router(users.router)
 app.include_router(articles.router)
 app.include_router(categories.router)
@@ -37,6 +40,8 @@ app.include_router(projects.router)
 app.include_router(captcha.router)
 app.include_router(email.router)
 app.include_router(site_settings.router)
+app.include_router(comments.router)
+app.include_router(rag.router)
 
 uploads_dir = os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(uploads_dir, exist_ok=True)

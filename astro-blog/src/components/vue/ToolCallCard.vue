@@ -8,17 +8,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue';
-
-const TOOL_NAMES: Record<string, string> = {
-  search_articles: '搜索文章',
-  get_article: '获取全文',
-  search_web: '联网搜索',
-  get_categories: '查看分类',
-  recommend_articles: '推荐文章',
-  summarize_url: 'AI 摘要',
-  summarize_text: 'AI 摘要',
-  export_file: '导出文件',
-};
+import { TOOL_NAMES } from '@lib/toolNames';
 
 const props = defineProps<{
   tool: string;

@@ -60,10 +60,6 @@ Thumbs.db
 .DS_Store
 *.log
 
-# Project documentation (except README)
-CHANGELOG.md
-CLAUDE.md
-
 # Environment variables (NEVER COMMIT)
 .env
 .env.local
@@ -75,8 +71,13 @@ python-backend/uploads/
 # Migration scripts (one-time use, may contain DB config)
 astro-blog/scripts/
 
+# RAG 向量库 + 日志
+python-backend/chroma_db/
+python-backend/logs/
+
 # Temporary files
 *.tmp
 *.temp
+*.bak
 ~*
 .#*

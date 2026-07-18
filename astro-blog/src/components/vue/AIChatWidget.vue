@@ -106,8 +106,8 @@
             <div class="max-w-[80%] space-y-1">
               <ThinkingTyping v-if="msg.streaming && (!msg.blocks || msg.blocks.length === 0 || (msg.blocks.length === 1 && msg.blocks[0].content === '...'))" />
               <template v-for="(block, bi) in msg.blocks" :key="bi">
-                <ThinkingCard v-if="block.type === 'thinking'" :text="block.text" :streaming="block.streaming" />
-                <ToolCallCard v-else-if="block.type === 'tool_call'" :tool="block.tool" :args="block.args" :status="block.status" />
+                <ThinkingCard v-if="block.type === 'thinking'" :text="block.text || ''" :streaming="block.streaming" />
+                <ToolCallCard v-else-if="block.type === 'tool_call'" :tool="block.tool || ''" :args="block.args" :status="(block.status as any)" />
                 <!-- 导出文件内联卡（优先渲染，确保一定可见） -->
                 <div v-else-if="block.type === 'tool_result' && isExportResult(block.result)" class="export-inline-card">
                   <svg class="w-5 h-5" fill="none" stroke="#16a34a" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
@@ -119,7 +119,7 @@
                 </div>
                 <ToolResultCard v-else-if="block.type === 'tool_result'" :result="block.result" />
                 <div v-else-if="block.type === 'text'" class="px-3 py-2 rounded-2xl text-sm leading-relaxed bg-white text-gray-700 rounded-bl-md shadow-sm">
-                  <div v-html="renderMarkdown(block.content)" />
+                  <div v-html="renderMarkdown(block.content || '')" />
                   <span v-if="block.streaming" class="inline-block w-2 h-4 bg-brand-600 animate-pulse rounded-sm ml-0.5 align-middle" />
                 </div>
               </template>
@@ -297,6 +297,7 @@ function newSession() {
   sessionId.value = null;
   messages.value = [];
   showHistory.value = false;
+  localStorage.removeItem('agentSessionId');
 }
 
 async function deleteSession(id: string) {
@@ -360,7 +361,7 @@ async function send() {
   // ─── 文档生成模式 ───
   if (isDocRequest(text)) {
     streaming.value = true;
-    const aiMsg: Message = { role: 'assistant', content: '正在为您生成文档...', streaming: true };
+    const aiMsg: UIMessage = { role: 'assistant', content: '正在为您生成文档...', streaming: true };
     messages.value.push(aiMsg);
     await scrollDown();
 
@@ -571,10 +572,22 @@ function downloadMessage(content: string) {
   URL.revokeObjectURL(url);
 }
 
-function exportChat(format: string) {
+async function exportChat(format: string) {
   if (!sessionId.value) return;
-  const token = getToken();
-  window.open(`/api/psychological-chat/export?sessionId=${sessionId.value}&format=${format}&token=${token}`, '_blank');
+  try {
+    const token = getToken();
+    const resp = await fetch('/api/psychological-chat/export/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', token: token || '' },
+      body: JSON.stringify({ sessionId: sessionId.value, format }),
+    });
+    const j = await resp.json();
+    if (j.code === '200' && j.data?.downloadToken) {
+      window.open(`/api/psychological-chat/export?sessionId=${sessionId.value}&format=${format}&dt=${j.data.downloadToken}`, '_blank');
+    } else {
+      alert('导出失败，请重试');
+    }
+  } catch { alert('导出失败'); }
 }
 
 async function scrollDown() {
@@ -630,5 +643,29 @@ input { background: #fff; }
 }
 .animate-slide-up {
   animation: slide-up 0.3s ease-out;
+}
+
+/* ── Markdown 表格样式 ── */
+:deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 12px;
+}
+:deep(th) {
+  background: #f1f5f9;
+  color: #475569;
+  padding: 6px 10px;
+  border: 1px solid #e2e8f0;
+  text-align: left;
+  font-weight: 600;
+}
+:deep(td) {
+  padding: 5px 10px;
+  border: 1px solid #e2e8f0;
+  color: #334155;
+}
+:deep(tr:nth-child(even) td) {
+  background: #f8fafc;
 }
 </style>

@@ -40,13 +40,16 @@ def update_profile(db: Session, uid: int, req: UserUpdateRequest):
     db.refresh(user)
     return UserResponse.model_validate(user).model_dump(by_alias=True)
 
-def change_password(db: Session, uid: int, new_pw: str):
+def change_password(db: Session, uid: int, old_pw: str, new_pw: str):
+    """返回 (成功, 消息)"""
     user = db.query(User).filter(User.id == uid).first()
     if not user:
-        return False
+        return False, "用户不存在"
+    if not bcrypt.checkpw(old_pw.encode(), user.password.encode()):
+        return False, "旧密码错误"
     user.password = bcrypt.hashpw(new_pw.encode(), bcrypt.gensalt()).decode()
     db.commit()
-    return True
+    return True, "操作成功"
 
 def list_users(db: Session, username: str = "", size: int = 50):
     q = db.query(User)
