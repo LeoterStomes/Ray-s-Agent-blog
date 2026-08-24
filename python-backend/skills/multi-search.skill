@@ -2,6 +2,11 @@
 ## trigger
 搜索、查一下、搜索一下、搜、search、找资料、调研、对比搜索
 
+
+## tools
+- `read_url`
+- `search_web`
+
 ## workflow
 1. 用 `search_web` 工具搜索，engine 参数可选 bing/duckduckgo/sogou，默认 auto 自动故障转移
 2. 如果多引擎结果互补，合并去重后呈现

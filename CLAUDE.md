@@ -7,6 +7,19 @@ Ray的垃圾站 — 全栈个人博客系统
 - 数据库：blog_db (MySQL 8.0, 端口 3307)
 - 路径：`personal-blog/The-new-AI-Psychological-assistant/`
 
+## 📋 待实现计划
+
+### ✅ API 管理面板
+- **位置**：管理后台 → API Key
+- **功能**：读写 .env，按分组展示（AI/搜索/邮件/飞书），敏感 key 脱敏
+- **状态**：已完成（2026-07-21）
+
+### ✅ 视频周报 v2（Pillow 渲染 + TTS 方案）
+- **流程**：Agent 生成 PPT → Pillow 渲染 PPT 风格画面 → Edge TTS 配音 → FFmpeg 合成 MP4
+- **状态**：已完成（2026-07-21）
+
+---
+
 ## 重要规则
 1. **完成任务后必须主动提问**：阶段性完成时告诉用户已完成什么，询问是否继续下一步，不要擅自做决定。
 2. **后端规范**：models/schemas/services/routers 四层分离。router 只做参数校验和路由，业务逻辑在 service，数据模型在 model，请求/响应在 schema。
@@ -106,6 +119,13 @@ astro-blog/src/
 - **2026-05-23** 文章详情页增加右侧推荐栏：同分类文章推荐（自动过滤当前文章），取前3篇，带封面/标题/阅读数，无推荐时隐藏。
 
 ## 最近修复记录
+- **2026-07-18** 跨会话记忆（Mem0）：自动提取/去重/合并事实，替换手写 ChromaDB 压缩
+- **2026-07-18** Agent 死循环防护：8 道防线（去重/硬上限/分类限制/断路器/超时取消/兜底/双层 break）
+- **2026-07-18** 搜索引擎升级：DuckDuckGo→Bing→SearXNG 三引擎 + `extract_images` 提取网页图片
+- **2026-07-18** System Prompt 精炼：206→80 行，核心规则 ⚠️ 标记，去冗余
+- **2026-07-18** PPT 生成：`generate_presentation`（python-pptx, 3 套主题）+ `extract_images` 配图
+- **2026-07-18** BGE 启动预加载：后台线程加载，首次对话不再卡顿
+- **2026-07-18** "继续"记忆：工具记录持久化到 DB，确保后续对话有上下文
 - **2026-07-12** 提示词抽离：`system_prompt.md` 独立文件，热加载；优先级：.md > .skill > chat.py 动态注入
 - **2026-07-12** 评论系统：model + service + router + CommentSection.vue，嵌套回复，游客提示登录
 - **2026-07-12** RAG 知识库：ChromaDB + BGE 嵌入，博客文章自动同步，外部文档导入，search_articles 升级为全库语义搜索
@@ -113,6 +133,15 @@ astro-blog/src/
 - **2026-07-12** 安全加固：删除不安全的 GET /forget 密码重置；公告/分类/音乐/项目/站点/用户状态 API 全补鉴权；AdminLayout 加 AdminGuard；新增速率限制中间件；聊天导出改用一次性下载令牌；文件上传加大小限制；SSE 异常不泄露内部信息；改密码需验证旧密码；gitignore 补 chroma_db/logs/.bak
 - **2026-07-12** 脑图修复：markmap 注入浅色主题；make_mindmap 与 MCP 版描述区分；禁止 Agent 撒谎"已生成"
 - **2026-07-12** Agent 工具面板：中文名映射（45个）+ 最新优先 + 超过 6 个折叠
+- **2026-07-21** API 管理面板：`/admin/api-keys`，读写 .env，按分组展示，敏感 key 脱敏
+- **2026-07-21** 视频周报 v2：Pillow 渲染 PPT 画面 + Edge TTS + FFmpeg → MP4（放弃 LibreOffice 截图）
+- **2026-07-21** Agent 稳定性修复：强制总结只在无自然产出时触发 + Vite 代理 10 分钟超时 + BATCH_TIMEOUT 300s
+- **2026-07-21** 工具结果加 status/message 字段：Agent 不再误判成功为"空结果"
+- **2026-07-21** read_document 支持 .pptx：python-pptx 提取幻灯片文本
+- **2026-07-21** get_article 截断 3000→8000 字 + Agent "直接行动不预告"规则
+- **2026-07-21** 搜索优先级：博客内容优先 search_articles（RAG），外部信息才用 search_web
+- **2026-07-21** PDF 导出修 fpdf2 HTML 问题：_html_to_text 转纯文本
+- **2026-07-18** 提示词架构重构：`prompts/` 8 文件 + metadata 头 + 按 trigger 动态加载；11 个 skill 全加 tools/links
 - **2026-07-12** System Prompt 全面优化：信息安全边界、表情规则、问候语规则、引用标注规则、导航指引规则、角色语气细则、禁止 Agent 自称 Claude/GPT
 
 ## 文章页设计

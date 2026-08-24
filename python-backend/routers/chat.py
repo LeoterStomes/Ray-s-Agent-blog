@@ -1,4 +1,5 @@
 import json
+import re
 import asyncio
 import copy
 from datetime import datetime, timezone
@@ -22,43 +23,130 @@ _mcp_servers = load_mcp_servers()
 _MCP_TOOLS = get_mcp_tools()
 if _MCP_TOOLS:
     print(f"[MCP] Loaded {len(_MCP_TOOLS)} external tools from {len(_mcp_servers)} servers")
+
+# ── 预加载 RAG 嵌入模型，避免首次对话等待 ──
+def _preload_embedding():
+    try:
+        from services.rag_service import _get_embedding_fn
+        _get_embedding_fn()
+    except Exception:
+        pass
+import threading
+threading.Thread(target=_preload_embedding, daemon=True).start()
 ALL_TOOLS = list(TOOLS_SCHEMA) + _MCP_TOOLS
 
 router = APIRouter(prefix="/api/psychological-chat", tags=["AI聊天"])
 
-# ── 加载 System Prompt ──
-_PROMPT_FILE = Path(__file__).parent.parent / "system_prompt.md"
+# ── 加载 Prompts + Skills（元数据驱动）──
+_PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+_SKILLS_DIR = Path(__file__).parent.parent / "skills"
 
-def _load_system_prompt() -> str:
-    if _PROMPT_FILE.exists():
-        return _PROMPT_FILE.read_text(encoding="utf-8")
-    return "你是 Ray 个人博客的 AI 助手。"
+# 缓存：所有 prompt 文件的解析结果
+_prompt_registry: list[dict] = []
+_always_prompts: list[str] = []
+_skill_text: str = ""
 
-# ── 加载 Skills ──
-def _load_skills() -> str:
-    skills_dir = Path(__file__).parent.parent / "skills"
-    if not skills_dir.exists():
-        return ""
-    parts = []
-    for f in sorted(skills_dir.glob("*.skill")):
+
+def _parse_frontmatter(text: str) -> tuple[dict, str]:
+    """解析 YAML 元数据头（--- ... ---），返回 (meta, body)"""
+    meta, body = {}, text
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) >= 3:
+            import yaml
+            try:
+                meta = yaml.safe_load(parts[1]) or {}
+            except Exception:
+                pass
+            body = parts[2].strip()
+    return meta, body
+
+
+def _load_prompts_and_skills():
+    global _prompt_registry, _always_prompts, _skill_text
+
+    # 加载 prompts/*.md
+    if _PROMPTS_DIR.exists():
+        for f in sorted(_PROMPTS_DIR.glob("*.md")):
+            try:
+                raw = f.read_text(encoding="utf-8")
+                meta, body = _parse_frontmatter(raw)
+                entry = {
+                    "name": f.stem,
+                    "meta": meta,
+                    "body": body,
+                    "triggers": meta.get("triggers", []),
+                    "always": meta.get("always", False),
+                }
+                _prompt_registry.append(entry)
+                if entry["always"]:
+                    _always_prompts.append(body)
+            except Exception:
+                pass
+
+    # 加载 skills/*.skill
+    if _SKILLS_DIR.exists():
+        parts = []
+        for f in sorted(_SKILLS_DIR.glob("*.skill")):
+            try:
+                content = f.read_text(encoding="utf-8")
+                name = f.stem.replace("-", " ").title()
+                parts.append(f"## {name}\n{content}")
+            except Exception:
+                pass
+        _skill_text = "\n\n".join(parts) if parts else ""
+
+
+def _build_system_prompt(user_message: str) -> str:
+    """根据用户消息动态组装 System Prompt"""
+    msg_lower = user_message.lower()
+    matched_bodies = list(_always_prompts)  # 始终加载的
+
+    for entry in _prompt_registry:
+        if entry["always"]:
+            continue  # 已加载
+        for t in entry["triggers"]:
+            if t.lower() in msg_lower:
+                matched_bodies.append(entry["body"])
+                break
+
+    prompt = "\n\n".join(matched_bodies)
+    if _skill_text:
+        prompt += "\n\n## 可用专业技能\n根据用户意图匹配对应 Skill，按 workflow 顺序调用工具：\n\n" + _skill_text
+    return prompt
+
+
+# 启动时加载
+_load_prompts_and_skills()
+print(f"[Prompt] 加载了 {len(_prompt_registry)} 个 prompt 文件 ({len(_always_prompts)} 常驻)")
+MAX_TOOL_ROUNDS = 18  # 兜底值，配合连续 3 次失败断路器
+
+
+async def _compress_and_store(session_id: int, user_id: int):
+    """异步保存会话到 Mem0 记忆（自动提取事实/去重/合并）"""
+    try:
+        db = SessionLocal()
+        msgs = db.query(ConsultationMessage).filter(
+            ConsultationMessage.session_id == session_id
+        ).order_by(ConsultationMessage.created_at.asc()).all()
+        if len(msgs) < 3:
+            return
+        # 拼接最近 10 条消息，让 Mem0 自动提取事实
+        lines = []
+        for m in msgs[-10:]:
+            role = "用户" if m.sender_type == 1 else "AI"
+            lines.append(f"{role}: {m.content[:300]}")
+        text = "\n".join(lines)
+        from services.memory_service import add_memory
+        add_memory(text, user_id)
+    except Exception:
+        pass
+    finally:
         try:
-            content = f.read_text(encoding="utf-8")
-            name = f.stem.replace("-", " ").title()
-            parts.append(f"## {name}\n{content}")
+            db.close()
         except Exception:
             pass
-    return "\n\n".join(parts) if parts else ""
 
-SKILLS_TEXT = _load_skills()
-
-SYSTEM_PROMPT = _load_system_prompt()
-MAX_TOOL_ROUNDS = 20  # 兜底值，正常由 Prompt 引导模型自行决定停止时机
-
-# 注入 Skills
-if SKILLS_TEXT:
-    SYSTEM_PROMPT += "\n\n## 可用专业技能 (Skills)\n"
-    SYSTEM_PROMPT += "根据用户意图匹配对应 Skill，按 Skill 定义的 workflow 顺序调用工具：\n\n"
-    SYSTEM_PROMPT += SKILLS_TEXT
 
 # ── 权限控制 ──
 WRITE_TOOLS = {"create_draft", "export_file"}  # 仅 admin(user_type=2) 可用的工具
@@ -81,10 +169,10 @@ def _now():
 def start_session(
     req: ChatSessionStartRequest,
     user_id: int = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db), #利用fastapi 进行数据库连接的自动注入
 ):
-    title = req.sessionTitle or req.initialMessage or "新对话"
-    title = title[:30]
+    title = req.sessionTitle or req.initialMessage or "新对话"    #agent 对话的标题截取，没有标题自动用首条消息当标题
+    title = title[:30]  #阶段限制，防止会话列表过大；限制30个字符
 
     session = ConsultationSession(
         user_id=user_id,
@@ -279,14 +367,33 @@ async def stream_chat(
             )
 
     now_str = _now().strftime("%Y年%m月%d日 %H:%M (星期%w)").replace('星期0','周日').replace('星期1','周一').replace('星期2','周二').replace('星期3','周三').replace('星期4','周四').replace('星期5','周五').replace('星期6','周六')
+
+    # 检索跨会话记忆
+    memory_ctx = ""
+    try:
+        from services.memory_service import search_memories
+        memories = search_memories(user_id, user_message, limit=3)
+        if memories:
+            memory_ctx = "\n## 历史记忆（来自你与用户之前的对话，可供参考）\n"
+            memory_ctx += "以下是用户之前聊过的话题摘要，如果当前问题与之相关可以引用：\n"
+            for i, m in enumerate(memories, 1):
+                memory_ctx += f"{i}. {m}\n"
+            memory_ctx += "注：这些是历史总结，仅供参考，不要逐条回复。\n"
+    except Exception:
+        pass
+
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT + f"\n当前时间：{now_str}" + user_ctx},
+        {"role": "system", "content": _build_system_prompt(user_message) + f"\n当前时间：{now_str}" + user_ctx + memory_ctx},
     ]
 
     KEEP_RECENT = 5
-    if len(all_history) > KEEP_RECENT:
-        older = all_history[:-KEEP_RECENT]
-        recent = all_history[-KEEP_RECENT:]
+    # 分离工具记录和对话消息
+    user_ai_history = [m for m in all_history if m.sender_type in (1, 2)]
+    tool_history = [m for m in all_history if m.sender_type in (3, 4)]  # 3=工具计数, 4=工具结果
+
+    if len(user_ai_history) > KEEP_RECENT:
+        older = user_ai_history[:-KEEP_RECENT]
+        recent = user_ai_history[-KEEP_RECENT:]
         lines = ["[历史摘要，仅供参考，只回复最新消息]"]
         for m in older:
             role = "用户" if m.sender_type == 1 else "AI"
@@ -297,18 +404,35 @@ async def stream_chat(
             role = "user" if msg.sender_type == 1 else "assistant"
             messages.append({"role": role, "content": msg.content})
     else:
-        for msg in all_history:
+        for msg in user_ai_history:
             role = "user" if msg.sender_type == 1 else "assistant"
             messages.append({"role": role, "content": msg.content})
+
+    # 注入工具执行记录（包含搜索结果内容，让"继续"知道之前搜了什么）
+    if tool_history:
+        tool_ctx = "上一轮已经搜索到的信息（不要重复搜索，直接在此基础上继续）：\n" + "\n".join(m.content[:200] for m in tool_history[-8:])
+        messages.insert(1, {"role": "system", "content": tool_ctx})
 
     async def event_generator():
         full_content = ""
         current_messages = messages
         tool_rounds = 0
+        consecutive_failures = 0
+        called_tools: set[str] = set()  # 去重：已调用的工具+参数
+        tool_counts: dict[str, int] = {}  # 每类工具调用次数
+        had_any_tool_calls = False  # 本轮是否调用过任何工具
+        round_tasks: list[asyncio.Task] = []  # 当前轮次的并行任务，新一轮开始前取消
+        MAX_SEARCH_CALLS = 8   # 联网搜索上限
+        MAX_READ_CALLS = 8     # 读网页上限
+        MAX_TOTAL_TOOLS = 15   # 单轮总工具硬上限
+        BATCH_TIMEOUT = 300.0   # 并行批次总超时（需容纳视频生成）
 
         try:
             while tool_rounds < MAX_TOOL_ROUNDS:
                 tool_rounds += 1
+                if consecutive_failures >= 6:
+                    yield f"event: thinking\ndata: {json.dumps({'text': '多次执行出错，用已有信息整理回答'})}\n\n"
+                    break
                 accumulated_tool_calls: dict[int, dict] = {}  # index -> {name, args}
                 has_content = False
 
@@ -343,15 +467,7 @@ async def stream_chat(
                                 chunk = json.loads(data_str)
                                 delta = chunk["choices"][0].get("delta", {})
 
-                                # 处理文本内容
-                                content = delta.get("content", "")
-                                if content:
-                                    has_content = True
-                                    full_content += content
-                                    yield f"event: message\ndata: {json.dumps({'text': content})}\n\n"
-                                    await asyncio.sleep(0.01)
-
-                                # 处理工具调用
+                                # 处理工具调用（先检测，因为有工具调用时内容要扣住）
                                 tc_list = delta.get("tool_calls")
                                 if tc_list:
                                     for tc in tc_list:
@@ -369,11 +485,31 @@ async def stream_chat(
                                             entry["name"] = tc["function"]["name"]
                                         if tc.get("function", {}).get("arguments"):
                                             entry["args"] += tc["function"]["arguments"]
+
+                                # 处理文本内容
+                                content = delta.get("content", "")
+                                if content:
+                                    # 过滤 DeepSeek 误输出的原始 XML 工具调用标签
+                                    if '<' in content and ('name=' in content or 'string=' in content or '</' in content):
+                                        content = re.sub(r'<[^>]*(?:name|string|invoke|parameter|tool_calls|function_calls|xml)[^>]*>[\s\S]*?</[^>]*>', '', content)
+                                        content = re.sub(r'<[^>]*(?:tool_calls|invoke|parameter)[^>]*/?>', '', content)
+                                        content = re.sub(r'</[^>]*>', '', content)
+                                        content = content.strip()
+                                    if content.strip():
+                                        has_content = True
+                                        full_content += content
+                                        # 工具调用过程中的文本发 thinking（折叠），不影响最终正文
+                                        if accumulated_tool_calls:
+                                            yield f"event: thinking\ndata: {json.dumps({'text': content})}\n\n"
+                                        else:
+                                            yield f"event: message\ndata: {json.dumps({'text': content})}\n\n"
+                                        await asyncio.sleep(0.01)
                             except (json.JSONDecodeError, KeyError, IndexError):
                                 continue
 
                 # 如果有工具调用，执行它们
                 if accumulated_tool_calls:
+                    had_any_tool_calls = True
                     # 构建 assistant 消息（含 tool_calls）
                     assistant_msg = {"role": "assistant", "content": full_content or None}
                     tc_formatted = []
@@ -388,9 +524,7 @@ async def stream_chat(
                             "type": "function",
                             "function": {"name": tc["name"], "arguments": tc["args"]},
                         })
-                        # 发送 tool_call 事件
-                        yield f"event: tool_call\ndata: {json.dumps({'tool': tc['name'], 'args': args_parsed})}\n\n"
-                        await asyncio.sleep(0.01)
+                        # tool_call 事件延迟到去重/限制检查之后再发，防止黄灯悬挂
 
                     if tc_formatted:
                         assistant_msg["tool_calls"] = tc_formatted
@@ -399,32 +533,114 @@ async def stream_chat(
                     current_messages = copy.deepcopy(current_messages)
                     current_messages.append(assistant_msg)
 
-                    # 执行工具并发送 tool_result
-                    tool_names = {
-                        'search_articles': '搜索博客文章', 'get_article': '读取文章全文',
-                        'search_web': '联网搜索', 'get_categories': '查看分类',
-                        'recommend_articles': '推荐文章', 'read_url': '读取网页',
-                        'read_document': '读取文档', 'summarize_url': 'AI 摘要',
-                        'summarize_text': 'AI 摘要', 'export_file': '导出文件',
-                        'get_recent_articles': '获取最新文章', 'create_draft': '创建草稿',
-                    }
+                    # 执行工具（并行 + 去重 + 批次超时）
+                    tool_names: dict[str, str] = {}
+                    tasks_to_run: list[dict] = []
+
                     for idx in sorted(accumulated_tool_calls.keys()):
                         tc = accumulated_tool_calls[idx]
                         try:
                             args_parsed = json.loads(tc["args"])
                         except json.JSONDecodeError:
                             args_parsed = {}
-                        # MCP 工具分发
+
+                        # 硬上限检查
+                        total_called = sum(tool_counts.values())
+                        if total_called >= MAX_TOTAL_TOOLS:
+                            yield f"event: thinking\ndata: {json.dumps({'text': '已达工具调用上限'})}\n\n"
+                            break
+                        if tc["name"] in ("search_web",) and tool_counts.get(tc["name"], 0) >= MAX_SEARCH_CALLS:
+                            yield f"event: thinking\ndata: {json.dumps({'text': '搜索次数已达上限，整理已有信息'})}\n\n"
+                            accumulated_tool_calls = {}
+                            break
+                        if tc["name"] in ("read_url", "extract_images") and tool_counts.get(tc["name"], 0) >= MAX_READ_CALLS:
+                            yield f"event: thinking\ndata: {json.dumps({'text': '读取已达上限，整理已有信息'})}\n\n"
+                            accumulated_tool_calls = {}
+                            break
+
+                        # 去重：同一工具+参数
+                        # read_url 做 URL 规范化（去尾部斜杠和参数差异）
+                        if tc["name"] in ("read_url", "extract_images") and "url" in args_parsed:
+                            url = args_parsed["url"].rstrip("/").split("?")[0].split("#")[0]
+                            dedup_key = f"{tc['name']}:{url[:120]}"
+                        else:
+                            dedup_key = f"{tc['name']}:{json.dumps(args_parsed, sort_keys=True, ensure_ascii=False)[:150]}"
+                        if dedup_key in called_tools:
+                            continue
+                        called_tools.add(dedup_key)
+                        tool_counts[tc["name"]] = tool_counts.get(tc["name"], 0) + 1
+
+                        # 发送 tool_call 事件
+                        yield f"event: tool_call\ndata: {json.dumps({'tool': tc['name'], 'args': args_parsed})}\n\n"
+                        tasks_to_run.append({"tc": tc, "args": args_parsed, "dedup_key": dedup_key})
+
+                    if not tasks_to_run:
+                        continue
+
+                    # 取消上一轮仍未完成的任务
+                    for old_task in round_tasks:
+                        if not old_task.done():
+                            old_task.cancel()
+                    round_tasks.clear()
+
+                    # 并行执行所有工具
+                    async def _run_one(tc, args_parsed, dedup_key):
                         if tc["name"].startswith("mcp_"):
                             result = await call_mcp_tool(tc["name"], args_parsed) or json.dumps({"error": "MCP 工具未找到"}, ensure_ascii=False)
                         else:
+                            long_tools_set = {"generate_presentation", "generate_weekly_video", "search_web", "read_url", "read_document", "extract_images"}
+                            t_timeout = 300.0 if tc["name"] == "generate_weekly_video" else (120.0 if tc["name"] == "generate_presentation" else (30.0 if tc["name"] in long_tools_set else 15.0))
+                            task = asyncio.create_task(execute_tool(tc["name"], args_parsed, db))
                             try:
-                                result = await asyncio.wait_for(
-                                    execute_tool(tc["name"], args_parsed, db),
-                                    timeout=15.0
-                                )
+                                result = await asyncio.wait_for(task, timeout=t_timeout)
                             except asyncio.TimeoutError:
+                                task.cancel()
+                                try:
+                                    await task
+                                except (asyncio.CancelledError, Exception):
+                                    pass
                                 result = json.dumps({"error": "工具执行超时"}, ensure_ascii=False)
+                        return {"tc": tc, "result": result, "dedup_key": dedup_key}
+
+                    round_tasks = [asyncio.create_task(_run_one(d["tc"], d["args"], d["dedup_key"])) for d in tasks_to_run]
+                    try:
+                        batch_results = await asyncio.wait_for(asyncio.gather(*round_tasks), timeout=BATCH_TIMEOUT)
+                    except asyncio.TimeoutError:
+                        # 超时：取消未完成的任务，用已完成的结果继续
+                        for t in round_tasks:
+                            if not t.done():
+                                t.cancel()
+                        batch_results = []
+                        for t in round_tasks:
+                            try:
+                                if t.done():
+                                    batch_results.append(t.result())
+                            except Exception:
+                                pass
+                        yield f"event: thinking\ndata: {json.dumps({'text': '部分搜索超时，用已有结果整理回答'})}\n\n"
+
+                    # 标记已完成工具的 ID
+                    done_ids = set()
+
+                    # 发送结果（成功完成的）
+                    for br in (batch_results or []):
+                        if br is None:
+                            continue
+                        tc = br["tc"]
+                        result = br["result"]
+                        done_ids.add(tc.get("id", ""))
+
+                        # 跟踪连续失败
+                        try:
+                            r_parsed = json.loads(result) if result else {}
+                            is_hard_error = "error" in r_parsed or "超时" in str(r_parsed)
+                            if is_hard_error:
+                                consecutive_failures += 1
+                            else:
+                                consecutive_failures = 0
+                        except Exception:
+                            pass
+
                         yield f"event: tool_result\ndata: {json.dumps({'tool': tc['name'], 'result': json.loads(result) if result else {}})}\n\n"
                         await asyncio.sleep(0.01)
 
@@ -434,21 +650,58 @@ async def stream_chat(
                             "content": result,
                         })
 
+                        # 保存工具结果到 DB（让"继续"有上下文）
+                        try:
+                            r_preview = json.loads(result) if result else {}
+                            summary = r_preview.get("results", "") or r_preview.get("content", "") or ""
+                            if isinstance(summary, str) and len(summary) > 300:
+                                summary = summary[:300] + "..."
+                            tool_db = SessionLocal()
+                            tm = ConsultationMessage(
+                                session_id=sid_int, sender_type=4,
+                                content=f"{tc['name']}: {summary}" if summary else tc['name'],
+                                created_at=_now(),
+                            )
+                            tool_db.add(tm)
+                            tool_db.commit()
+                            tool_db.close()
+                        except Exception:
+                            pass
+
+                    # 发送未完成工具的结果（被取消/超时/跳过）
+                    for d in tasks_to_run:
+                        tc = d["tc"]
+                        if tc.get("id", "") in done_ids:
+                            continue
+                        yield f"event: tool_result\ndata: {json.dumps({'tool': tc['name'], 'result': {'cancelled': True, 'reason': '批次超时或新轮次取消'}})}\n\n"
+                        await asyncio.sleep(0.01)
+                        current_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": json.dumps({"cancelled": True}),
+                        })
+
                     # 继续循环让模型处理工具结果
                     continue
 
                 # 没有工具调用，结束循环
                 break
 
-            # 如果没有文本输出（一直调工具），强制做最后一轮总结
-            if not full_content and current_messages:
-                summary_msg = [{"role": "system", "content": "结合以上工具执行结果，用简体中文给出简洁的最终回答。不要调用任何工具。"}]
+            # 强制清理所有残留运行中的任务
+            for t in round_tasks:
+                if not t.done():
+                    t.cancel()
+            round_tasks.clear()
+
+            # 有工具调用且没有文本输出 → 追加总结请求
+            if had_any_tool_calls and not full_content:
+                current_messages.append({"role": "user", "content": "请根据以上所有搜索结果，用简体中文整理一份详细的最终回答。不要搜索、不要调用工具、不要说你搜索的过程。列出找到的具体项目名称、链接和简介。"})
                 try:
-                    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=25.0)) as client:
+                    async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, read=40.0)) as client:
                         async with client.stream(
                             "POST", f"{AI_BASE_URL}/v1/chat/completions",
                             headers={"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"},
-                            json={"model": AI_MODEL, "messages": current_messages + summary_msg, "stream": True},
+                            json={"model": AI_MODEL, "messages": current_messages, "stream": True, "tool_choice": "none"},
                         ) as response:
                             async for line in response.aiter_lines():
                                 if not line.startswith("data: "): continue
@@ -461,8 +714,40 @@ async def stream_chat(
                                         full_content += text
                                         yield f"event: message\ndata: {json.dumps({'text': text})}\n\n"
                                         await asyncio.sleep(0.01)
-                                except: pass
-                except: pass
+                                except Exception:
+                                    pass
+                except Exception as e:
+                    import traceback
+                    print(f"[Agent] Force summary failed: {e}")
+                    traceback.print_exc()
+                    full_content = ""
+
+            # 兜底：如果全程没产出任何内容，发一条提示
+            if not full_content:
+                full_content = "抱歉，处理你的请求时遇到了问题，请稍后重试。"
+                yield f"event: message\ndata: {json.dumps({'text': full_content})}\n\n"
+
+            # 保存工具执行记录（让后续"继续"知道之前做了什么）
+            if had_any_tool_calls:
+                save_db = SessionLocal()
+                try:
+                    tool_summary_parts = []
+                    for tool_name, count in sorted(tool_counts.items()):
+                        tool_summary_parts.append(f"{tool_name}: {count}次")
+                    tool_summary = "已执行工具：" + "、".join(tool_summary_parts)
+                    tool_msg = ConsultationMessage(
+                        session_id=sid_int, sender_type=3,  # 3=工具记录
+                        content=tool_summary, created_at=_now(),
+                    )
+                    save_db.add(tool_msg)
+                    save_db.commit()
+                finally:
+                    save_db.close()
+
+            # 保存前清理 XML 工具调用残留（不伤 HTML 标签）
+            full_content = re.sub(r'<\s*(?:tool_calls|invoke|parameter|function_calls)\b[^>]*>[\s\S]*?</\s*(?:tool_calls|invoke|parameter|function_calls)\s*>', '', full_content or '')
+            full_content = re.sub(r'<\s*(?:tool_calls|invoke|parameter|function_calls)\b[^>]*/?>', '', full_content)
+            full_content = re.sub(r'<\s*/\s*(?:tool_calls|invoke|parameter|function_calls)\s*>', '', full_content)
 
             # 保存完整回复
             if full_content:
@@ -479,6 +764,12 @@ async def stream_chat(
                     save_db.commit()
                 finally:
                     save_db.close()
+
+                # 异步压缩会话记忆（fire-and-forget，不阻塞响应）
+                try:
+                    asyncio.create_task(_compress_and_store(sid_int, user_id))
+                except Exception:
+                    pass
 
             yield "event: done\ndata: {}\n\n"
 

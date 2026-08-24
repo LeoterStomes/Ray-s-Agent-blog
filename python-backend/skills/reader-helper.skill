@@ -2,6 +2,14 @@
 ## trigger
 推荐文章、有什么文章、最近写了什么、最新、热门、分类、某个分类、标签、找文章、帮我找
 
+
+## tools
+- `get_article`
+- `get_categories`
+- `get_recent_articles`
+- `recommend_articles`
+- `search_articles`
+
 ## workflow
 1. **看需求**: 判断用户要的是最新文章、某个分类、还是关键词搜索
    - 最新 → `get_recent_articles`

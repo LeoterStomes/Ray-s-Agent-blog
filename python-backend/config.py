@@ -57,6 +57,9 @@ AI_MODEL = os.getenv("AI_MODEL", "deepseek-chat")
 #                     "openai" 使用 OpenAI 兼容 API（需 EMBEDDING_API_KEY）
 # EMBEDDING_MODEL: 本地默认 BAAI/bge-small-zh-v1.5（中文优化，~400MB）
 #                  云默认 text-embedding-3-small
+# BAIDU_API_KEY: 百度千帆 AI 搜索 API Key，从 https://console.bce.baidu.com 获取
+BAIDU_API_KEY = os.getenv("BAIDU_API_KEY", "")
+
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "local")
 EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", "")
 EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "https://api.openai.com/v1")

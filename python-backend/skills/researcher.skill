@@ -2,6 +2,13 @@
 ## trigger
 调研、研究、深入了解一下、帮我查、查一下、最新进展、对比、有什么区别
 
+
+## tools
+- `get_article`
+- `read_url`
+- `search_articles`
+- `search_web`
+
 ## workflow
 1. **搜博客**: 用 `search_articles` 查博客是否有相关内容
 2. **自动兜底**: 如果博客无结果或结果不匹配 → **必须立即**用 `search_web` 联网搜索，不要就此放弃

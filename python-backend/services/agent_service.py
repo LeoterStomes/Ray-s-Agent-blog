@@ -11,7 +11,7 @@ TOOLS_SCHEMA = [
     {"type":"function","function":{"name":"get_article","description":"Get full article content by ID","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Article ID (UUID)"}},"required":["article_id"]}}},
     {"type":"function","function":{"name":"get_categories","description":"List all blog categories with article counts","parameters":{"type":"object","properties":{}}}},
     {"type":"function","function":{"name":"recommend_articles","description":"Recommend related articles by category","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Current article ID"},"limit":{"type":"integer","description":"Max results, default 3","default":3}},"required":["article_id"]}}},
-    {"type":"function","function":{"name":"search_web","description":"Web search via Bing (cn.bing.com)","parameters":{"type":"object","properties":{"query":{"type":"string","description":"Search keyword"}},"required":["query"]}}},
+    {"type":"function","function":{"name":"search_web","description":"Web search via DuckDuckGo→Bing→SearXNG multi-engine fallback. No JS required, returns text results.","parameters":{"type":"object","properties":{"query":{"type":"string","description":"Search keyword in natural language, e.g. 'github trending projects this week'"}},"required":["query"]}}},
     {"type":"function","function":{"name":"read_url","description":"Read any webpage URL and return text content","parameters":{"type":"object","properties":{"url":{"type":"string","description":"Full URL to read"}},"required":["url"]}}},
     {"type":"function","function":{"name":"get_recent_articles","description":"Get the most recent published articles","parameters":{"type":"object","properties":{"limit":{"type":"integer","description":"Max results, default 5","default":5}}}}},
     {"type":"function","function":{"name":"create_draft","description":"Create a draft blog article","parameters":{"type":"object","properties":{"title":{"type":"string","description":"Article title"},"content":{"type":"string","description":"Article content (HTML)"},"summary":{"type":"string","description":"Summary, optional"},"tags":{"type":"string","description":"Comma-separated tags"},"category_id":{"type":"integer","description":"Category ID, optional"}},"required":["title","content"]}}},
@@ -20,6 +20,9 @@ TOOLS_SCHEMA = [
     {"type":"function","function":{"name":"summarize_url","description":"Summarize a webpage URL using AI. Returns a concise Chinese summary","parameters":{"type":"object","properties":{"url":{"type":"string","description":"Webpage URL to summarize"}},"required":["url"]}}},
     {"type":"function","function":{"name":"summarize_text","description":"Summarize text content using AI. Returns a concise Chinese summary","parameters":{"type":"object","properties":{"content":{"type":"string","description":"Text to summarize"},"max_length":{"type":"integer","description":"Max summary length, default 300","default":300}},"required":["content"]}}},
     {"type":"function","function":{"name":"export_file","description":"Export content as PDF/DOCX/TXT file. Returns download URL","parameters":{"type":"object","properties":{"title":{"type":"string","description":"Document title"},"content":{"type":"string","description":"Content to export (HTML or plain text)"},"format":{"type":"string","description":"File format: pdf / docx / txt","default":"pdf"}},"required":["title","content"]}}},
+    {"type":"function","function":{"name":"generate_presentation","description":"Generate a professional PowerPoint presentation. Provide JSON with title, theme (dark/tech/warm), and slides. Each content slide can have title, bullets, image_url (for embedding pictures), code, and speaker notes. Use extract_images to get real project images from web pages.","parameters":{"type":"object","properties":{"script_json":{"type":"string","description":"JSON: {title, theme, slides: [{type, title, subtitle, bullets, image_url, code, notes}]}"}},"required":["script_json"]}}},
+    {"type":"function","function":{"name":"extract_images","description":"Visit a webpage and extract all image URLs from it. Returns up to 10 image URLs with descriptions. Useful for getting real project logos, screenshots, and article images for PPTs.","parameters":{"type":"object","properties":{"url":{"type":"string","description":"Full webpage URL to extract images from"}},"required":["url"]}}},
+    {"type":"function","function":{"name":"generate_weekly_video","description":"Generate a video from PPT slides + voiceover. First creates a PPT, then converts each slide to a video frame with TTS narration from speaker notes. Returns download URL for the MP4 video.","parameters":{"type":"object","properties":{"script_json":{"type":"string","description":"JSON: {title, theme, slides: [{type, title, subtitle, bullets, notes}]}. Same format as generate_presentation but notes field is used for TTS voiceover."}},"required":["script_json"]}}},
 ]
 
 async def execute_tool(name: str, args: dict, db: Session) -> str:
@@ -36,6 +39,9 @@ async def execute_tool(name: str, args: dict, db: Session) -> str:
     elif name == "summarize_text": return await _summarize_text(args.get("content",""), args.get("max_length",300))
     elif name == "export_file": return _export_file(args)
     elif name == "make_mindmap": return _make_mindmap(args.get("markdown",""))
+    elif name == "generate_presentation": return await _generate_ppt(args.get("script_json",""))
+    elif name == "extract_images": return await _extract_images(args.get("url",""))
+    elif name == "generate_weekly_video": return await _generate_video(args.get("script_json",""))
     return json.dumps({"error":f"Unknown tool: {name}"}, ensure_ascii=False)
 
 # --- implementations ---
@@ -90,8 +96,8 @@ def _get_article(db, aid):
     if not aid: return json.dumps({"error":"Need ID"}, ensure_ascii=False)
     a = db.query(KnowledgeArticle).filter(KnowledgeArticle.id==aid).first()
     if not a: return json.dumps({"error":"Not found"}, ensure_ascii=False)
-    d = _a2d(a); d["content"] = (a.content or "")[:3000]
-    d["content_truncated"] = len(a.content or "") > 3000
+    d = _a2d(a); d["content"] = (a.content or "")[:8000]
+    d["content_truncated"] = len(a.content or "") > 8000
     return json.dumps(d, ensure_ascii=False)
 
 def _get_categories(db):
@@ -139,6 +145,55 @@ def _a2d(a):
         "tags":a.tags,"read_count":a.read_count or 0,
         "published_at":a.published_at.isoformat() if a.published_at else "","url":f"/blog/{a.id}"}
 
+async def _extract_images(url: str) -> str:
+    """提取网页中的图片 URL"""
+    if not url:
+        return json.dumps({"error": "Need URL"}, ensure_ascii=False)
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as c:
+            r = await c.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code != 200:
+                return json.dumps({"error": f"HTTP {r.status_code}"}, ensure_ascii=False)
+            html = r.text
+
+        images = []
+        # 提取 og:image（文章主图，最优先）
+        og_match = re.search(r'<meta[^>]+property="og:image"[^>]+content="([^"]+)"', html, re.I)
+        if og_match:
+            images.append({"url": og_match.group(1), "type": "og:image", "label": "文章主图"})
+
+        # 提取所有 <img> 的 src
+        img_matches = re.finditer(r'<img[^>]+src="([^"]+)"[^>]*(?:alt="([^"]*)")?', html, re.I)
+        for m in img_matches:
+            src = m.group(1)
+            alt = m.group(2) or ""
+            # 过滤小图标和占位符
+            if any(s in src.lower() for s in ['avatar', 'icon', 'logo-small', '1x1', 'pixel', 'spacer', 'tracking']):
+                continue
+            # 补全相对路径
+            if src.startswith("//"):
+                src = "https:" + src
+            elif src.startswith("/"):
+                from urllib.parse import urljoin
+                src = urljoin(url, src)
+            if src.startswith("http") and len(src) < 2000:
+                label = alt[:50] if alt else "配图"
+                images.append({"url": src, "type": "img", "label": label})
+
+        # 去重，最多 10 张
+        seen = set()
+        unique = []
+        for img in images:
+            if img["url"] not in seen:
+                seen.add(img["url"])
+                unique.append(img)
+        unique = unique[:10]
+
+        return json.dumps({"url": url, "image_count": len(unique), "images": unique}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+
 async def _read_url(url):
     if not url: return json.dumps({"error":"Need URL"}, ensure_ascii=False)
     try:
@@ -149,7 +204,7 @@ async def _read_url(url):
                 t = re.sub(r'<script[^>]*>.*?</script>','',t,flags=re.DOTALL)
                 t = re.sub(r'<style[^>]*>.*?</style>','',t,flags=re.DOTALL)
                 t = re.sub(r'<[^>]+>',' ',t); t = re.sub(r'\s+',' ',t).strip()
-                if len(t)>3000: t = t[:3000]+"...(truncated)"
+                if len(t)>3000: t = t[:8000]+"...(truncated)"
                 return json.dumps({"url":url,"content":t}, ensure_ascii=False)
     except Exception as e: return json.dumps({"error":str(e)}, ensure_ascii=False)
     return json.dumps({"error":"Failed"}, ensure_ascii=False)
@@ -173,6 +228,19 @@ async def _read_document(url):
                 from docx import Document; import io
                 text = "\n".join(p.text for p in Document(io.BytesIO(content)).paragraphs if p.text.strip())
             except Exception as e: return json.dumps({"error":f"DOCX: {e}"}, ensure_ascii=False)
+        elif "pptx" in ct or "presentation" in ct or ul.endswith(".pptx"):
+            try:
+                from pptx import Presentation; import io
+                prs = Presentation(io.BytesIO(content))
+                slides_text = []
+                for i, slide in enumerate(prs.slides):
+                    parts = [f"--- Slide {i+1} ---"]
+                    for shape in slide.shapes:
+                        if shape.has_text_frame:
+                            parts.append(shape.text_frame.text)
+                    slides_text.append("\n".join(parts))
+                text = "\n\n".join(slides_text[:20])  # 最多 20 页
+            except Exception as e: return json.dumps({"error":f"PPTX: {e}"}, ensure_ascii=False)
         elif "text/plain" in ct: text = content.decode("utf-8",errors="ignore")
         else:
             t = content.decode("utf-8",errors="ignore")
@@ -180,7 +248,7 @@ async def _read_document(url):
             t = re.sub(r'<style[^>]*>.*?</style>','',t,flags=re.DOTALL)
             t = re.sub(r'<[^>]+>',' ',t); text = re.sub(r'\s+',' ',t).strip()
         if not text.strip(): return json.dumps({"error":"No text extracted"}, ensure_ascii=False)
-        if len(text)>3000: text = text[:3000]+"...(truncated)"
+        if len(text)>3000: text = text[:8000]+"...(truncated)"
         return json.dumps({"url":url,"type":ct or "unknown","content":text}, ensure_ascii=False)
     except Exception as e: return json.dumps({"error":str(e)}, ensure_ascii=False)
 
@@ -225,6 +293,36 @@ def _make_mindmap(markdown: str) -> str:
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
+async def _generate_ppt(script_json: str) -> str:
+    """生成 PPT 幻灯片"""
+    if not script_json:
+        return json.dumps({"error": "请提供幻灯片脚本 JSON"}, ensure_ascii=False)
+    try:
+        script = json.loads(script_json) if isinstance(script_json, str) else script_json
+        from .slide_service import generate_presentation
+        result = await generate_presentation(script)
+        return json.dumps(result, ensure_ascii=False)
+    except json.JSONDecodeError:
+        return json.dumps({"error": "脚本 JSON 格式错误"}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+
+async def _generate_video(script_json: str) -> str:
+    """PPT → 视频（v2）"""
+    if not script_json:
+        return json.dumps({"error": "请提供脚本 JSON"}, ensure_ascii=False)
+    try:
+        script = json.loads(script_json) if isinstance(script_json, str) else script_json
+        from .video_service import ppt_to_video
+        result = await ppt_to_video(script)
+        return json.dumps(result, ensure_ascii=False)
+    except json.JSONDecodeError:
+        return json.dumps({"error": "脚本 JSON 格式错误"}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+
 def _export_file(args: dict) -> str:
     """Export content as PDF/DOCX/TXT/HTML"""
     from .export_service import export_pdf, export_docx, export_txt, export_html
@@ -259,19 +357,69 @@ async def _summarize_text(content, max_length=300):
 async def _search_web(query, engine="auto"):
     if not query: return json.dumps({"query":query,"results":"No query"}, ensure_ascii=False)
     import asyncio as _asyncio
-    # 多引擎故障转移: bing → duckduckgo，单引擎5秒超时
-    engines = [
-        ("bing", "https://cn.bing.com/search", {"q": query, "count": "5"}),
+    from config import BAIDU_API_KEY
+    # 多引擎故障转移：百度AI搜索 → DuckDuckGo(lite) → Bing → SearXNG
+    engines = []
+    if BAIDU_API_KEY:
+        engines.append(("baidu", "https://qianfan.baidubce.com/v2/ai_search/web_search", {
+            "messages": [{"content": query, "role": "user"}],
+            "search_recency_filter": "month",
+            "resource_type_filter": [{"type": "web", "top_k": 8}],
+        }))
+    engines += [
+        ("searxng", "https://search.sapti.me/search", {"q": query, "format": "json"}),
         ("duckduckgo", "https://lite.duckduckgo.com/lite/", {"q": query}),
     ]
     if engine != "auto":
         engines = [e for e in engines if e[0] == engine] or engines
 
     async def _try_one(eng_name, eng_url, eng_params):
-        hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as c:
-            r = await c.get(eng_url, params=eng_params, headers=hdrs)
+        hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8", "Content-Type": "application/json"}
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as c:
+            # 百度 API 用 POST + JSON
+            if eng_name == "baidu":
+                r = await c.post(eng_url, headers={**hdrs, "X-Appbuilder-Authorization": f"Bearer {BAIDU_API_KEY}"},
+                                 json=eng_params)
+            else:
+                r = await c.get(eng_url, params=eng_params, headers=hdrs)
             if r.status_code != 200: return None
+            # 百度返回 JSON（字段名: references）
+            if eng_name == "baidu":
+                try:
+                    data = r.json()
+                    refs = data.get("references", [])[:10]
+                    lines = []
+                    for item in refs:
+                        title = item.get("title", "")
+                        url = item.get("url", "")
+                        snippet = item.get("content", "") or item.get("summary", "")
+                        if title and url:
+                            lines.append(f"- {title}\\n  {url}\\n  {snippet[:150]}")
+                    if lines:
+                        return json.dumps({"engine": "baidu", "query": query, "results": '\\n'.join(lines)[:2000]}, ensure_ascii=False)
+                except Exception:
+                    pass
+                return None
+            # SearXNG 返回 JSON
+            if eng_name == "searxng":
+                try:
+                    data = r.json()
+                    results = data.get("results", [])[:8]
+                    lines = []
+                    for item in results:
+                        title = item.get("title", "")
+                        url = item.get("url", "")
+                        snippet = item.get("content", "") or item.get("snippet", "")
+                        if title and url:
+                            lines.append(f"- {title}\\n  {url}\\n  {snippet[:100]}")
+                    if lines:
+                        return json.dumps({"engine": eng_name, "query": query, "results": '\\n'.join(lines)[:1500]}, ensure_ascii=False)
+                except Exception:
+                    pass
+                return None
+            # DuckDuckGo / Bing：提取文本
             text = _extract_text(r.text)
             if text and len(text) > 50:
                 return json.dumps({"engine": eng_name, "query": query, "results": text[:1500]}, ensure_ascii=False)
@@ -279,7 +427,7 @@ async def _search_web(query, engine="auto"):
 
     for eng_name, eng_url, eng_params in engines:
         try:
-            result = await _asyncio.wait_for(_try_one(eng_name, eng_url, eng_params), timeout=6.0)
+            result = await _asyncio.wait_for(_try_one(eng_name, eng_url, eng_params), timeout=10.0)
             if result: return result
         except (_asyncio.TimeoutError, Exception):
             continue

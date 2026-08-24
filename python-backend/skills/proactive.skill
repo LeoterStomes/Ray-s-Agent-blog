@@ -2,6 +2,11 @@
 ## trigger
 有什么新内容、最近更新了什么、有什么推荐的、主动通知、推送
 
+
+## tools
+- `get_categories`
+- `get_recent_articles`
+
 ## workflow
 1. 用 `get_recent_articles` 获取最新文章
 2. 用 `get_categories` 查看各分类动态

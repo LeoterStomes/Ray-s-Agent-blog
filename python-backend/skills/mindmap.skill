@@ -1,0 +1,32 @@
+# Mindmap / 思维导图
+## trigger
+脑图、思维导图、mindmap、画个图、层级图、结构图、帮我整理成图、可视化、树状图
+
+## tools
+- `make_mindmap`
+- `mcp_markmap__markdown_to_mindmap`
+
+## links
+- prompts/mindmap-guide.md — 脑图使用规则（两个工具的区别）
+
+## workflow
+1. **收集内容**：根据用户需求收集要展示的信息（文章内容、搜索结果、对话总结等）
+2. **整理为 Markdown 大纲**：
+```markdown
+# 总标题
+## 一级分支
+### 二级分支
+- 具体要点
+## 另一个分支
+```
+3. **选择工具**：
+   - 写文章需要内嵌脑图 → 用 `make_mindmap`（返回 URL + iframe，把 iframe 原样写入文章 HTML）
+   - 对话中展示 → 用 MCP 版 `mcp_markmap__markdown_to_mindmap`（直接展示）
+4. **严禁同时调用两个**
+
+## rules
+- 实际调用工具——说"帮你生成"但不调 = 撒谎
+- Markdown 层级 3-4 层，不要太深
+- 每个节点文字控制在 10 字以内
+- 写文章时 content 必须真实包含 iframe 代码，不是文字描述
+- 不是所有内容都适合脑图——层级结构才用，线性叙事不要用

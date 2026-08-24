@@ -9,7 +9,7 @@ from models import *  # noqa — 确保所有模型注册到 Base
 Base.metadata.create_all(bind=engine)
 
 from services.visitor_service import stats as visitor_stats_func, ping as visitor_ping_func
-from routers import users, articles, categories, favorites, chat, files, announcements, music, projects, captcha, email, site_settings, comments, rag
+from routers import users, articles, categories, favorites, chat, files, announcements, music, projects, captcha, email, site_settings, comments, rag, api_manager
 
 _ALLOWED_ORIGINS = os.getenv(
     "CORS_ORIGINS",
@@ -42,6 +42,7 @@ app.include_router(email.router)
 app.include_router(site_settings.router)
 app.include_router(comments.router)
 app.include_router(rag.router)
+app.include_router(api_manager.router)
 
 uploads_dir = os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(uploads_dir, exist_ok=True)

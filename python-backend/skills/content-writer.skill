@@ -2,6 +2,14 @@
 ## trigger
 写文章、起草、帮我写、生成文章、写一篇、投稿、发布文章、create article、write post
 
+
+## tools
+- `create_draft`
+- `get_categories`
+- `make_mindmap`
+- `search_articles`
+- `search_web`
+
 ## workflow
 1. **查重**: 用 `search_articles` 避免重复
 2. **找分类**: 用 `get_categories` 确定分类

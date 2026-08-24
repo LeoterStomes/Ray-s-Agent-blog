@@ -1,0 +1,115 @@
+# Whitepaper / 白皮书生成器
+## trigger
+白皮书、技术文档、入门指南、完全指南、从入门到、运维手册、最佳实践、深度报告、
+whitepaper、技术白皮书、学习路线、完整教程
+
+## tools
+- `export_file`
+- `search_web`
+- `read_url`
+- `extract_images`
+
+## links
+- content-writer.skill — HTML 模板参考（深色主题 vs 白皮书浅色主题）
+- export.skill — 文件导出格式参考
+
+## workflow
+1. **确定主题**：明确白皮书的标题、目标读者、章节大纲（5-8章）
+2. **搜资料**：对每个章节主题用 search_web 搜索最新信息，read_url 深度阅读
+3. **撰写正文**：按以下模板生成 HTML，调 `export_file(title, content, format="docx")`
+
+## HTML 模板（A4 竖版，专业白皮书样式）
+
+### 封面
+```html
+<div style="text-align:center;padding:120px 0 80px 0;page-break-after:always">
+  <h1 style="font-size:32px;color:#1e293b;margin-bottom:16px">[白皮书标题]</h1>
+  <p style="font-size:18px;color:#64748b;margin-bottom:48px">[副标题]</p>
+  <div style="width:80px;height:4px;background:#3b82f6;margin:0 auto 48px"></div>
+  <p style="font-size:14px;color:#94a3b8">[作者/机构] · [日期]</p>
+  <p style="font-size:12px;color:#cbd5e1;margin-top:120px">版本 1.0 · 仅供学习参考</p>
+</div>
+```
+
+### 目录页
+```html
+<div style="page-break-after:always">
+  <h2 style="font-size:24px;color:#1e293b;border-bottom:2px solid #3b82f6;padding-bottom:8px;margin-bottom:24px">目录</h2>
+  <p style="font-size:15px;line-height:2.2;color:#475569">
+  1. [章节名] ......................................................... 3<br>
+  2. [章节名] ......................................................... 5<br>
+  ...
+  </p>
+</div>
+```
+
+### 正文章节
+```html
+<div style="margin-bottom:40px">
+  <h2 style="font-size:22px;color:#1e293b;border-left:4px solid #3b82f6;padding-left:12px;margin-bottom:16px">X. 章节标题</h2>
+  <p style="font-size:14px;line-height:1.9;color:#334155;text-indent:2em;margin-bottom:12px">
+  正文段落内容。每段控制在 3-5 句话。技术术语加粗。
+  </p>
+</div>
+```
+
+### 提示框（三种类型）
+```html
+<!-- 关键概念 -->
+<div style="background:#eff6ff;border-left:4px solid #3b82f6;padding:16px 20px;margin:20px 0;border-radius:4px">
+  <strong style="color:#1d4ed8">📌 关键概念：</strong>
+  <p style="color:#475569;margin:6px 0">解释内容</p>
+</div>
+
+<!-- 注意事项 -->
+<div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:16px 20px;margin:20px 0;border-radius:4px">
+  <strong style="color:#d97706">⚠️ 注意事项：</strong>
+  <p style="color:#92400e;margin:6px 0">注意事项内容</p>
+</div>
+
+<!-- 最佳实践 -->
+<div style="background:#f0fdf4;border-left:4px solid #22c55e;padding:16px 20px;margin:20px 0;border-radius:4px">
+  <strong style="color:#16a34a">💡 最佳实践：</strong>
+  <p style="color:#166534;margin:6px 0">实践建议</p>
+</div>
+```
+
+### 代码块
+```html
+<pre style="background:#0f172a;color:#e2e8f0;padding:20px 24px;border-radius:8px;font-size:13px;line-height:1.8;overflow-x:auto;margin:16px 0;font-family:Consolas,Monaco,monospace"><code>代码内容（注意 &lt; 和 &gt; 要转义）</code></pre>
+```
+
+### 表格
+```html
+<table style="width:100%;border-collapse:collapse;margin:20px 0;font-size:14px">
+  <thead><tr style="background:#f1f5f9">
+    <th style="padding:10px 14px;border:1px solid #e2e8f0;text-align:left;color:#475569">列名</th>
+    <th style="padding:10px 14px;border:1px solid #e2e8f0;text-align:left;color:#475569">说明</th>
+  </tr></thead>
+  <tbody>
+    <tr><td style="padding:8px 14px;border:1px solid #e2e8f0;color:#334155">数据</td><td style="padding:8px 14px;border:1px solid #e2e8f0;color:#334155">说明</td></tr>
+  </tbody>
+</table>
+```
+
+### 封底
+```html
+<div style="text-align:center;padding:120px 0;page-break-before:always">
+  <div style="width:60px;height:4px;background:#3b82f6;margin:0 auto 32px"></div>
+  <p style="font-size:20px;color:#1e293b;margin-bottom:8px">感谢阅读</p>
+  <p style="font-size:14px;color:#94a3b8">[机构/博客名] · [日期]</p>
+  <p style="font-size:12px;color:#cbd5e1;margin-top:48px">本文档由 AI 辅助生成，仅供参考</p>
+</div>
+```
+
+## rules
+- 封面后必须 `page-break-after:always`，目录后同理
+- 每个章节至少包含：1 段正文 + 1 个提示框或表格
+- 代码块必须用 `<pre><code>`，尖括号要 HTML 转义
+- 提示框根据内容选择：概念用蓝色、警告用黄色、实践用绿色
+- 白皮书 5-8 章，每章 500-1500 字
+- 标题编号统一用 "一、" "二、" 或 "1." "2."（保持一致）
+- 末尾必须有参考来源列表
+- 正文中可以用 `<strong>` 加粗关键术语
+- 所有颜色使用内联 style，不依赖外部 CSS
+- 生成的 docx 在 Word/WPS 中打开效果最好

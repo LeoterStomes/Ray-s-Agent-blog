@@ -2,6 +2,12 @@
 ## trigger
 总结、摘要、概括、太长不看、帮我总结、这篇文章讲了什么、归纳、提炼
 
+
+## tools
+- `get_article`
+- `summarize_text`
+- `summarize_url`
+
 ## workflow
 1. 判断用户要总结的是 URL 还是已有文本
    - URL → 用 `summarize_url` 工具

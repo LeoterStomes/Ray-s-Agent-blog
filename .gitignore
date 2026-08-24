@@ -81,3 +81,6 @@ python-backend/logs/
 *.bak
 ~*
 .#*
+
+#忽视指定 exe 文件
+/ffmpeg.exe

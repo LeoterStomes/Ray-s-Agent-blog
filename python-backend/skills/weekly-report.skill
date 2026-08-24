@@ -1,0 +1,78 @@
+# Weekly Report PPT Generator
+## trigger
+周报、热点周报、AI周报、技术周报、生成周报、weekly report、新闻简报、
+生成PPT、做个幻灯片、做份简报
+
+
+## tools
+- `generate_presentation`
+- `search_web`
+- `read_url`
+- `extract_images`
+
+## workflow
+1. **搜索热点**：用 search_web 搜索本周热点（中英文），至少搜 3 个不同关键词
+2. **深度阅读**：对每条重要新闻用 read_url 获取详情
+3. **搜索配图**：对每条重要新闻用 search_web 搜索相关图片，找到图片 URL 后填入 image_url 字段。
+   搜索词示例："DeepSeek logo site:img" 或直接搜 "DeepSeek 官方图片"
+   图片 URL 必须以 http 开头，指向 .jpg/.png/.webp 等格式
+4. **整理脚本**：将结果整理为以下 JSON 格式：
+```json
+{
+  "title": "本周AI热点周报（日期范围）",
+  "theme": "dark",
+  "slides": [
+    {
+      "type": "title",
+      "title": "本周AI热点周报",
+      "subtitle": "2026年7月12日 - 7月18日"
+    },
+    {
+      "type": "section",
+      "title": "一、重大发布"
+    },
+    {
+      "type": "content",
+      "title": "DeepSeek 发布新版本",
+      "bullets": ["要点1：...", "要点2：...", "要点3：..."],
+      "image_url": "https://example.com/deepseek-logo.png",
+      "notes": "演讲者备注：详细讲解内容..."
+    },
+    {
+      "type": "content",
+      "title": "代码示例",
+      "bullets": ["展示了新的API用法"],
+      "code": "import deepseek\nds = DeepSeek()",
+      "notes": "这里展示了一段示例代码"
+    },
+    {
+      "type": "section",
+      "title": "二、行业趋势"
+    },
+    {
+      "type": "content",
+      "title": "AI 代理技术爆发",
+      "bullets": ["趋势1", "趋势2", "趋势3"]
+    },
+    {
+      "type": "ending",
+      "title": "感谢收看",
+      "subtitle": "下周再见"
+    }
+  ]
+}
+```
+4. **调用生成**：将 JSON 作为 script_json 参数调用 `generate_presentation`
+5. **返回结果**：告知用户下载链接 + 幻灯片数量
+
+## rules
+- 脚本根级别可加 `"voice": "news"` 选择配音音色：
+  - `default`（晓晓女声，默认）/ `news`（云希新闻男声）/ `calm`（晓晓平静）
+  - `friendly`（晓晓亲切）/ `serious`（云健严肃男声）/ `warm`（晓伊温暖女声）/ `pro`（云扬专业男声）
+- slide 类型：title（封面）/ section（分隔）/ content（正文）/ ending（结尾）
+- content 页必须有 title + bullets（3-5条要点），可选 code 代码块
+- notes 是演讲者备注，用于 TTS 配音或演讲提示，用自然口语撰写
+- theme 可选：dark（深色科技）/ tech（极客蓝）/ warm（暖色亮底）
+- 每张 content slide 的 bullets 控制在 3-5 条，每条不超过 30 字
+- 总幻灯片数建议 8-15 张
+- 按标题自动分词：2-3 条新闻用 section 分隔

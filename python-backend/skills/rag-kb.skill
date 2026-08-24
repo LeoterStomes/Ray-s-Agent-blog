@@ -4,6 +4,11 @@
 Python、JavaScript、编程、技术问题、代码怎么写、API、框架、库、方法论、概念解释、
 看看文档、查资料、查文档、翻翻、有没有文章、谁写过、博文里有没有
 
+## tools
+- `search_articles`
+- `search_web`
+- `get_article`
+
 ## workflow
 1. **优先使用 search_articles** 搜索知识库（已整合：博客文章 + 外部参考文档，一次搜索覆盖全部）。
 2. 查看返回结果中的 `search_type` 字段：

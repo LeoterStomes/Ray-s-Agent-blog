@@ -27,6 +27,9 @@ def export_pdf(title: str, content: str) -> dict:
     """Generate PDF, return {url, filename}"""
     from fpdf import FPDF
 
+    # fpdf2 不支持 HTML，先转为纯文本
+    content = _html_to_text(content)
+
     filename = f"{_sanitize_filename(title)}_{uuid.uuid4().hex[:6]}.pdf"
     filepath = os.path.join(EXPORT_DIR, filename)
 

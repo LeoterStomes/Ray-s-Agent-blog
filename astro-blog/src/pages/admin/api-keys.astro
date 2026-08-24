@@ -1,0 +1,8 @@
+---
+import AdminLayout from '@layouts/AdminLayout.astro';
+import ApiKeyManager from '@components/vue/ApiKeyManager.vue';
+---
+
+<AdminLayout title="API Key 管理">
+  <ApiKeyManager client:only="vue" />
+</AdminLayout>

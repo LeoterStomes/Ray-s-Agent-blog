@@ -17,8 +17,16 @@ export default defineConfig({
   vite: {
     server: {
       proxy: {
-        '/api': 'http://localhost:1235',
-        '/uploads': 'http://localhost:1235',
+        '/api': {
+          target: 'http://localhost:1235',
+          changeOrigin: true,
+          proxyTimeout: 600000,    // 10 分钟，长工具不会断
+          timeout: 600000,
+        },
+        '/uploads': {
+          target: 'http://localhost:1235',
+          changeOrigin: true,
+        },
       },
     },
     resolve: {

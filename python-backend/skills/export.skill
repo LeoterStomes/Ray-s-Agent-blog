@@ -2,6 +2,9 @@
 ## trigger
 导出、下载、保存为、生成PDF、生成Word、导出为文件、下载文档、生成文件、保存文档
 
+## tools
+- `export_file`
+
 ## workflow
 1. 用户要求导出时，**必须立即调用 export_file 工具**，不要说你做不到
 2. 你有 export_file 工具，可以生成 PDF、DOCX、TXT 三种格式

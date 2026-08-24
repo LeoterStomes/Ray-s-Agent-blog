@@ -60,8 +60,11 @@
                 <div class="avatar-circle avatar-ai">🐱</div>
                 <div class="msg-blocks">
                   <ThinkingTyping v-if="msg.streaming && (!msg.blocks || msg.blocks.length === 0 || (msg.blocks.length === 1 && msg.blocks[0].content === '...'))" />
-                  <template v-for="(block, bi) in msg.blocks" :key="bi">
-                    <ThinkingCard v-if="block.type === 'thinking'" :text="block.text || ''" :streaming="block.streaming" />
+                  <template v-for="(block, bi) in mergeToolBlocks(msg.blocks)" :key="bi">
+                    <ThinkingCard v-if="block.type === 'thinking' && bi === msg.blocks.length - 1" :text="block.text || ''" :streaming="block.streaming" />
+                    <div v-else-if="block.type === 'tool_batch'" class="tool-batch-card">
+                      <span class="batch-text">已调用 {{ block.count }} 个工具：{{ block.tools.map((t: any) => t.displayName || t.tool).slice(0, 4).join('、') }}{{ block.count > 4 ? '等' : '' }}</span>
+                    </div>
                     <ToolCallCard
                       v-else-if="block.type === 'tool_call'"
                       :tool="block.tool || ''"
@@ -74,6 +77,10 @@
                       <svg class="w-5 h-5" fill="none" stroke="#16a34a" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                       <div class="flex-1 min-w-0"><div class="text-xs font-semibold truncate">{{ block.result.filename }}</div><div class="text-[10px] text-gray-500">{{ (block.result.format||'').toUpperCase() }}</div></div>
                       <a :href="encodeURI(block.result.url)" :download="block.result.filename" class="inline-dl-btn">下载</a>
+                    </div>
+                    <!-- 工具完成简要提示 -->
+                    <div v-else-if="block.type === 'tool_result' && !(block.result?.format && block.result?.url)" class="tool-done-card">
+                      <span style="color:#16a34a">&#10003;</span> 工具完成
                     </div>
                     <ToolResultCard
                       v-else-if="block.type === 'tool_result'"
@@ -391,6 +398,21 @@ function isExportResult(r: any): boolean {
   return !!(r.url && r.filename && ['pdf','docx','txt'].includes(fmt));
 }
 
+function mergeToolBlocks(blocks: any[]): any[] {
+  if (!blocks || blocks.length === 0) return [];
+  const out: any[] = [];
+  let toolGroup: any[] = [];
+  for (const block of blocks) {
+    if (block.type === 'tool_call') { toolGroup.push(block); }
+    else {
+      if (toolGroup.length > 0) { out.push({ type: 'tool_batch', tools: toolGroup, count: toolGroup.length }); toolGroup = []; }
+      out.push(block);
+    }
+  }
+  if (toolGroup.length > 0) out.push({ type: 'tool_batch', tools: toolGroup, count: toolGroup.length });
+  return out;
+}
+
 function renderMarkdown(content: string): string {
   if (!content) return '';
   return marked.parse(content, { breaks: true }) as string;
@@ -457,8 +479,14 @@ async function sendMsg() {
           try {
             const d = JSON.parse(raw);
             blocks.push({ type: 'tool_call', tool: d.tool, args: d.args, status: 'running' });
-            const rec: ToolRecord = { displayName: TOOL_NAMES[d.tool] || d.tool, tool: d.tool, status: 'running', args: d.args };
-            toolHistory.value.push(rec);
+            const displayName = TOOL_NAMES[d.tool] || d.tool;
+            // 去重：同名工具只保留最新一条
+            const existingIdx = toolHistory.value.findIndex(t => t.displayName === displayName && t.status === 'running');
+            if (existingIdx >= 0) {
+              toolHistory.value[existingIdx] = { displayName, tool: d.tool, status: 'running', args: d.args };
+            } else {
+              toolHistory.value.push({ displayName, tool: d.tool, status: 'running', args: d.args });
+            }
             if (selectedToolIdx.value < 0) selectedToolIdx.value = toolHistory.value.length - 1;
           } catch {}
           scrollDown();
@@ -504,14 +532,22 @@ async function sendMsg() {
           streaming.value = false;
         }
       },
-      onerror(err) {
+      onerror(err: any) {
+        const status = err?.status || err?.response?.status || 0;
+        if (status === 401) {
+          alert('登录已过期，请刷新页面重新登录。');
+        }
         streaming.value = false;
         streamCtrl.value?.abort();
         throw err;
       },
       onclose() { streaming.value = false; },
     });
-  } catch {
+  } catch (err: any) {
+    const status = err?.status || 0;
+    if (status === 401) {
+      alert('登录已过期，请刷新页面重新登录。');
+    }
     streaming.value = false;
   }
 }
@@ -684,4 +720,11 @@ async function scrollDown() {
 :deep(th) { background: #f1f5f9; color: #475569; padding: 6px 10px; border: 1px solid #e2e8f0; text-align: left; font-weight: 600; }
 :deep(td) { padding: 5px 10px; border: 1px solid #e2e8f0; color: #334155; }
 :deep(tr:nth-child(even) td) { background: #f8fafc; }
+
+.tool-batch-card { display: flex; align-items: center; gap: 8px; padding: 6px 10px; color: #64748b; font-size: 12px; background: #f8fafc; border-radius: 8px; margin: 2px 0; }
+.batch-spinner { width: 14px; height: 14px; border: 2px solid #e2e8f0; border-top-color: #94a3b8; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
+.batch-check { font-size: 12px; color: #16a34a; flex-shrink: 0; }
+.batch-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-done-card { font-size: 11px; color: #94a3b8; padding: 4px 8px; }
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>

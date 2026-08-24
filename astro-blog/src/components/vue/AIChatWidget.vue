@@ -105,9 +105,12 @@
             </div>
             <div class="max-w-[80%] space-y-1">
               <ThinkingTyping v-if="msg.streaming && (!msg.blocks || msg.blocks.length === 0 || (msg.blocks.length === 1 && msg.blocks[0].content === '...'))" />
-              <template v-for="(block, bi) in msg.blocks" :key="bi">
-                <ThinkingCard v-if="block.type === 'thinking'" :text="block.text || ''" :streaming="block.streaming" />
-                <ToolCallCard v-else-if="block.type === 'tool_call'" :tool="block.tool || ''" :args="block.args" :status="(block.status as any)" />
+              <template v-for="(block, bi) in mergeToolBlocks(msg.blocks)" :key="bi">
+                <ThinkingCard v-if="block.type === 'thinking' && bi === msg.blocks.length - 1" :text="block.text || ''" :streaming="block.streaming" />
+                <!-- 批量工具调用合并显示 -->
+                <div v-else-if="block.type === 'tool_batch'" class="tool-batch-card">
+                  <span class="batch-text">已调用 {{ block.count }} 个工具：{{ block.tools.map((t: any) => t.displayName || t.tool).slice(0, 4).join('、') }}{{ block.count > 4 ? '等' : '' }}</span>
+                </div>
                 <!-- 导出文件内联卡（优先渲染，确保一定可见） -->
                 <div v-else-if="block.type === 'tool_result' && isExportResult(block.result)" class="export-inline-card">
                   <svg class="w-5 h-5" fill="none" stroke="#16a34a" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
@@ -117,7 +120,11 @@
                   </div>
                   <a :href="encodeURI(block.result.url)" :download="block.result.filename" class="inline-dl-btn">下载</a>
                 </div>
-                <ToolResultCard v-else-if="block.type === 'tool_result'" :result="block.result" />
+                <!-- 搜索结果简要提示（排除导出） -->
+                <div v-else-if="block.type === 'tool_result' && !isExportResult(block.result)" class="tool-done-card">
+                  <span class="done-icon">&#10003;</span> 工具完成
+                </div>
+                <!-- 导出文件内联卡在前面已处理，这里兜底 -->
                 <div v-else-if="block.type === 'text'" class="px-3 py-2 rounded-2xl text-sm leading-relaxed bg-white text-gray-700 rounded-bl-md shadow-sm">
                   <div v-html="renderMarkdown(block.content || '')" />
                   <span v-if="block.streaming" class="inline-block w-2 h-4 bg-brand-600 animate-pulse rounded-sm ml-0.5 align-middle" />
@@ -182,7 +189,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onMounted, watch } from 'vue';
+import { ref, computed, nextTick, onMounted, watch } from 'vue';
 import { $isLoggedIn } from '@lib/store';
 import { getToken } from '@lib/auth';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
@@ -357,6 +364,10 @@ async function send() {
   input.value = '';
   errorMsg.value = '';
   const token = getToken();
+  if (!token) {
+    errorMsg.value = '请先登录再使用 AI 助手';
+    return;
+  }
 
   // ─── 文档生成模式 ───
   if (isDocRequest(text)) {
@@ -531,7 +542,10 @@ async function send() {
       },
 
       onerror(err: any) {
-        if (!fullContent && blocks.length === 0) {
+        const status = err?.status || err?.response?.status || 0;
+        if (status === 401) {
+          errorMsg.value = '登录已过期，请刷新页面重新登录。';
+        } else if (!fullContent && blocks.length === 0) {
           messages.value.pop();
           errorMsg.value = '连接超时或后端无响应，请稍后重试。';
         } else {
@@ -547,8 +561,11 @@ async function send() {
         streaming.value = false;
       },
     });
-  } catch {
-    if (!aiMsg.content && (!aiMsg.blocks || aiMsg.blocks.length === 0)) {
+  } catch (err: any) {
+    const status = err?.status || 0;
+    if (status === 401) {
+      errorMsg.value = '登录已过期，请刷新页面重新登录。';
+    } else if (!aiMsg.content && (!aiMsg.blocks || aiMsg.blocks.length === 0)) {
       messages.value.pop();
       errorMsg.value = '连接失败，请确认后端服务已启动。';
     }
@@ -556,6 +573,29 @@ async function send() {
   } finally {
     connecting.value = false;
   }
+}
+
+// 合并连续 tool_call 块为一个批量指示器
+function mergeToolBlocks(blocks: any[]): any[] {
+  if (!blocks || blocks.length === 0) return [];
+  const out: any[] = [];
+  let toolGroup: any[] = [];
+
+  for (const block of blocks) {
+    if (block.type === 'tool_call') {
+      toolGroup.push(block);
+    } else {
+      if (toolGroup.length > 0) {
+        out.push({ type: 'tool_batch', tools: toolGroup, count: toolGroup.length });
+        toolGroup = [];
+      }
+      out.push(block);
+    }
+  }
+  if (toolGroup.length > 0) {
+    out.push({ type: 'tool_batch', tools: toolGroup, count: toolGroup.length });
+  }
+  return out;
 }
 
 function renderMarkdown(content: string): string {
@@ -668,4 +708,24 @@ input { background: #fff; }
 :deep(tr:nth-child(even) td) {
   background: #f8fafc;
 }
+
+/* 批量工具调用卡片 */
+.tool-batch-card {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; color: #64748b; font-size: 12px;
+  background: #f8fafc; border-radius: 8px; margin: 2px 0;
+}
+.batch-spinner {
+  width: 14px; height: 14px;
+  border: 2px solid #e2e8f0;
+  border-top-color: #94a3b8;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+.batch-check { font-size: 12px; color: #16a34a; flex-shrink: 0; }
+.batch-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-done-card { font-size: 11px; color: #94a3b8; padding: 4px 8px; }
+.done-icon { color: #16a34a; }
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>
