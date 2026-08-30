@@ -20,6 +20,12 @@ if not exist "%VENV_PYTHON%" (
 cd /d "%BACKEND_DIR%"
 echo Starting backend on http://localhost:1235
 echo API docs: http://localhost:1235/docs
+echo (close this window to stop; crashes auto-restart in 3s)
 echo.
+
+:restart
 "%VENV_PYTHON%" -m uvicorn main:app --host 0.0.0.0 --port 1235 --reload --reload-exclude "*uploads*" --reload-exclude "*chroma_db*" --reload-exclude "*logs*" --reload-exclude "*__pycache__*"
-pause
+echo.
+echo [WARN] Backend exited. Auto-restarting in 3 seconds... (close window to stop)
+timeout /t 3 /nobreak >nul
+goto restart
