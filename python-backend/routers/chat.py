@@ -16,7 +16,6 @@ from auth import get_current_user_id, verify_token
 from config import AI_API_KEY, AI_BASE_URL, AI_MODEL
 from services.agent_service import TOOLS_SCHEMA, execute_tool
 from services.mcp_client import load_mcp_servers, get_mcp_tools, call_mcp_tool
-from pathlib import Path
 
 # ── 加载 MCP Server ──
 _mcp_servers = load_mcp_servers()
@@ -37,88 +36,12 @@ ALL_TOOLS = list(TOOLS_SCHEMA) + _MCP_TOOLS
 
 router = APIRouter(prefix="/api/psychological-chat", tags=["AI聊天"])
 
-# ── 加载 Prompts + Skills（元数据驱动）──
-_PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
-_SKILLS_DIR = Path(__file__).parent.parent / "skills"
+# ── Prompt/Skill 组装（services/prompt_builder.py，skill 按需注入）──
+from services.prompt_builder import build_system_prompt as _build_prompt
 
-# 缓存：所有 prompt 文件的解析结果
-_prompt_registry: list[dict] = []
-_always_prompts: list[str] = []
-_skill_text: str = ""
+# 每个会话上一轮的 prompt/skill 匹配结果（跟进消息无命中时继承）
+_session_matches: dict[int, dict] = {}
 
-
-def _parse_frontmatter(text: str) -> tuple[dict, str]:
-    """解析 YAML 元数据头（--- ... ---），返回 (meta, body)"""
-    meta, body = {}, text
-    if text.startswith("---"):
-        parts = text.split("---", 2)
-        if len(parts) >= 3:
-            import yaml
-            try:
-                meta = yaml.safe_load(parts[1]) or {}
-            except Exception:
-                pass
-            body = parts[2].strip()
-    return meta, body
-
-
-def _load_prompts_and_skills():
-    global _prompt_registry, _always_prompts, _skill_text
-
-    # 加载 prompts/*.md
-    if _PROMPTS_DIR.exists():
-        for f in sorted(_PROMPTS_DIR.glob("*.md")):
-            try:
-                raw = f.read_text(encoding="utf-8")
-                meta, body = _parse_frontmatter(raw)
-                entry = {
-                    "name": f.stem,
-                    "meta": meta,
-                    "body": body,
-                    "triggers": meta.get("triggers", []),
-                    "always": meta.get("always", False),
-                }
-                _prompt_registry.append(entry)
-                if entry["always"]:
-                    _always_prompts.append(body)
-            except Exception:
-                pass
-
-    # 加载 skills/*.skill
-    if _SKILLS_DIR.exists():
-        parts = []
-        for f in sorted(_SKILLS_DIR.glob("*.skill")):
-            try:
-                content = f.read_text(encoding="utf-8")
-                name = f.stem.replace("-", " ").title()
-                parts.append(f"## {name}\n{content}")
-            except Exception:
-                pass
-        _skill_text = "\n\n".join(parts) if parts else ""
-
-
-def _build_system_prompt(user_message: str) -> str:
-    """根据用户消息动态组装 System Prompt"""
-    msg_lower = user_message.lower()
-    matched_bodies = list(_always_prompts)  # 始终加载的
-
-    for entry in _prompt_registry:
-        if entry["always"]:
-            continue  # 已加载
-        for t in entry["triggers"]:
-            if t.lower() in msg_lower:
-                matched_bodies.append(entry["body"])
-                break
-
-    prompt = "\n\n".join(matched_bodies)
-    if _skill_text:
-        prompt += "\n\n## 可用专业技能\n根据用户意图匹配对应 Skill，按 workflow 顺序调用工具：\n\n" + _skill_text
-    return prompt
-
-
-# 启动时加载
-_load_prompts_and_skills()
-print(f"[Prompt] 加载了 {len(_prompt_registry)} 个 prompt 文件 ({len(_always_prompts)} 常驻)")
 MAX_TOOL_ROUNDS = 18  # 兜底值，配合连续 3 次失败断路器
 
 
@@ -294,6 +217,7 @@ def delete_session(
     ).delete()
     # 删除会话
     db.delete(session)
+    _session_matches.pop(sid_int, None)  # 清理 prompt/skill 匹配缓存
     db.commit()
 
     return {"code": "200", "msg": "已删除", "data": None}
@@ -386,8 +310,17 @@ async def stream_chat(
     except Exception:
         pass
 
+    # 触发匹配文本：当前消息 + 最近 2 条用户消息（跟进问题也能命中上下文）
+    recent_user_texts = [m.content or "" for m in all_history if m.sender_type == 1][-3:]
+    match_text = " ".join(recent_user_texts).lower()
+    sys_prompt, matches = _build_prompt(match_text, _session_matches.get(sid_int))
+    if matches["prompts"] or matches["skills"]:
+        _session_matches[sid_int] = matches
+        if len(_session_matches) > 500:  # 防无界增长
+            _session_matches.clear()
+
     messages = [
-        {"role": "system", "content": _build_system_prompt(user_message) + f"\n当前时间：{now_str}" + user_ctx + memory_ctx},
+        {"role": "system", "content": sys_prompt + f"\n当前时间：{now_str}" + user_ctx + memory_ctx},
     ]
 
     KEEP_RECENT = 5
@@ -398,7 +331,7 @@ async def stream_chat(
     if len(user_ai_history) > KEEP_RECENT:
         older = user_ai_history[:-KEEP_RECENT]
         recent = user_ai_history[-KEEP_RECENT:]
-        lines = ["[历史摘要，仅供参考，只回复最新消息]"]
+        lines = ["[历史摘要：仅供背景参考，与当前问题无关则忽略；与其他记忆冲突时以更新的信息为准。只回复最新消息]"]
         for m in older:
             role = "用户" if m.sender_type == 1 else "AI"
             preview = (m.content or "")[:80].replace("\n", " ")
@@ -414,7 +347,7 @@ async def stream_chat(
 
     # 注入工具执行记录（包含搜索结果内容，让"继续"知道之前搜了什么）
     if tool_history:
-        tool_ctx = "上一轮已经搜索到的信息（不要重复搜索，直接在此基础上继续）：\n" + "\n".join(m.content[:200] for m in tool_history[-8:])
+        tool_ctx = "上一轮已执行工具的结果（与当前问题相关才使用；不要重复调用已成功的相同工具）：\n" + "\n".join(m.content[:200] for m in tool_history[-8:])
         messages.insert(1, {"role": "system", "content": tool_ctx})
 
     async def event_generator():
