@@ -21,5 +21,5 @@ cd /d "%BACKEND_DIR%"
 echo Starting backend on http://localhost:1235
 echo API docs: http://localhost:1235/docs
 echo.
-"%VENV_PYTHON%" -m uvicorn main:app --host 0.0.0.0 --port 1235 --reload
+"%VENV_PYTHON%" -m uvicorn main:app --host 0.0.0.0 --port 1235 --reload --reload-exclude "*uploads*" --reload-exclude "*chroma_db*" --reload-exclude "*logs*" --reload-exclude "*__pycache__*"
 pause

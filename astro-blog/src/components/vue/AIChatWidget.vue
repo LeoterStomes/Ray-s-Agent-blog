@@ -106,7 +106,7 @@
             <div class="max-w-[80%] space-y-1">
               <ThinkingTyping v-if="msg.streaming && (!msg.blocks || msg.blocks.length === 0 || (msg.blocks.length === 1 && msg.blocks[0].content === '...'))" />
               <template v-for="(block, bi) in mergeToolBlocks(msg.blocks)" :key="bi">
-                <ThinkingCard v-if="block.type === 'thinking' && bi === msg.blocks.length - 1" :text="block.text || ''" :streaming="block.streaming" />
+                <ThinkingCard v-if="block.type === 'thinking'" :text="block.text || ''" :streaming="block.streaming" />
                 <!-- 批量工具调用合并显示 -->
                 <div v-else-if="block.type === 'tool_batch'" class="tool-batch-card">
                   <span class="batch-text">已调用 {{ block.count }} 个工具：{{ block.tools.map((t: any) => t.displayName || t.tool).slice(0, 4).join('、') }}{{ block.count > 4 ? '等' : '' }}</span>

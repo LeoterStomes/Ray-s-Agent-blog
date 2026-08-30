@@ -15,10 +15,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 
-defineProps<{ text: string; streaming?: boolean }>();
+const props = defineProps<{ text: string; streaming?: boolean }>();
 const collapsed = ref(true);
+
+// 流式输出时自动展开（用户能实时看到思考过程），结束后自动折叠保持整洁
+watch(() => props.streaming, (v) => {
+  collapsed.value = !v;
+}, { immediate: true });
 </script>
 
 <style scoped>

@@ -424,6 +424,11 @@ async def stream_chat(
         consecutive_failures = 0
         called_tools: set[str] = set()  # 去重：已调用的工具+参数
         tool_counts: dict[str, int] = {}  # 每类工具调用次数
+        failed_urls: dict[str, str] = {}  # 本轮已读取失败的 URL → 错误摘要（跨工具防重试）
+        URL_FETCH_TOOLS = {"read_url", "read_document", "summarize_url", "extract_images"}
+
+        def _norm_url(u: str) -> str:
+            return (u or "").rstrip("/").split("?")[0].split("#")[0][:200]
         had_any_tool_calls = False  # 本轮是否调用过任何工具
         round_tasks: list[asyncio.Task] = []  # 当前轮次的并行任务，新一轮开始前取消
         MAX_SEARCH_CALLS = 8   # 联网搜索上限
@@ -437,6 +442,11 @@ async def stream_chat(
                 if consecutive_failures >= 6:
                     yield f"event: thinking\ndata: {json.dumps({'text': '多次执行出错，用已有信息整理回答'})}\n\n"
                     break
+                # 状态心跳：让用户看到 Agent 正在做什么（而非长时间无反馈）
+                if tool_rounds == 1:
+                    yield f"event: thinking\ndata: {json.dumps({'text': '正在思考，规划下一步…'})}\n\n"
+                else:
+                    yield f"event: thinking\ndata: {json.dumps({'text': '已获取结果，正在整理…'})}\n\n"
                 accumulated_tool_calls: dict[int, dict] = {}  # index -> {name, args}
                 round_text = ""  # 本轮文本：有工具调用的轮次视为思考过程，不进最终回复
 
@@ -461,6 +471,11 @@ async def stream_chat(
                         },
                         json=request_json,
                     ) as response:
+                        # 检查 HTTP 状态：模型服务异常时显式重试，不再静默吞掉
+                        if response.status_code != 200:
+                            consecutive_failures += 2
+                            yield f"event: thinking\ndata: {json.dumps({'text': f'模型服务异常（HTTP {response.status_code}），正在重试…'})}\n\n"
+                            continue
                         async for line in response.aiter_lines():
                             if not line.startswith("data: "):
                                 continue
@@ -585,6 +600,16 @@ async def stream_chat(
                                 "content": json.dumps({"skipped": True, "reason": "重复调用，已忽略，请基于已有结果继续"}, ensure_ascii=False),
                             })
                             continue
+                        # 跨工具失败记忆：同一链接已读取失败，禁止换工具重试
+                        if tc["name"] in URL_FETCH_TOOLS and isinstance(args_parsed.get("url"), str):
+                            nu = _norm_url(args_parsed["url"])
+                            if nu in failed_urls:
+                                current_messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tc["id"],
+                                    "content": json.dumps({"skipped": True, "reason": f"该链接刚刚读取失败（{failed_urls[nu]}），请勿更换工具重复尝试；请如实告知用户读取失败并给出替代方案（如请用户直接粘贴文字内容）"}, ensure_ascii=False),
+                                })
+                                continue
                         called_tools.add(dedup_key)
                         tool_counts[tc["name"]] = tool_counts.get(tc["name"], 0) + 1
 
@@ -603,6 +628,7 @@ async def stream_chat(
 
                     # 并行执行所有工具
                     async def _run_one(tc, args_parsed, dedup_key):
+                        norm_url = _norm_url(args_parsed["url"]) if isinstance(args_parsed.get("url"), str) else None
                         if tc["name"].startswith("mcp_"):
                             result = await call_mcp_tool(tc["name"], args_parsed) or json.dumps({"error": "MCP 工具未找到"}, ensure_ascii=False)
                         else:
@@ -622,7 +648,7 @@ async def stream_chat(
                                 result = json.dumps({"error": "工具执行超时"}, ensure_ascii=False)
                             finally:
                                 tool_db.close()
-                        return {"tc": tc, "result": result, "dedup_key": dedup_key}
+                        return {"tc": tc, "result": result, "dedup_key": dedup_key, "url": norm_url}
 
                     round_tasks = [asyncio.create_task(_run_one(d["tc"], d["args"], d["dedup_key"])) for d in tasks_to_run]
                     try:
@@ -662,6 +688,17 @@ async def stream_chat(
                                 consecutive_failures = 0
                         except Exception:
                             pass
+
+                        # 记录读取失败的 URL，防止模型换工具重试同一链接
+                        if br.get("url"):
+                            try:
+                                rj = json.loads(result) if result else {}
+                                err_txt = str(rj.get("error", "")) if isinstance(rj, dict) else ""
+                                summ_txt = str(rj.get("summary", "")) if isinstance(rj, dict) else ""
+                                if err_txt or "无法访问" in summ_txt or "请求失败" in summ_txt or "未能从页面" in summ_txt:
+                                    failed_urls[br["url"]] = (err_txt or summ_txt)[:80]
+                            except Exception:
+                                pass
 
                         yield f"event: tool_result\ndata: {json.dumps({'tool': tc['name'], 'result': json.loads(result) if result else {}})}\n\n"
                         await asyncio.sleep(0.01)
@@ -726,6 +763,8 @@ async def stream_chat(
                             headers={"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"},
                             json={"model": AI_MODEL, "messages": current_messages, "stream": True, "tool_choice": "none"},
                         ) as response:
+                            if response.status_code != 200:
+                                raise httpx.HTTPError(f"force summary request failed: HTTP {response.status_code}")
                             async for line in response.aiter_lines():
                                 if not line.startswith("data: "): continue
                                 data_str = line[6:]
