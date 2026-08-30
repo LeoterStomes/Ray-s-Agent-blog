@@ -249,9 +249,13 @@ def get_session_messages(
     if not session:
         return {"code": "404", "msg": "会话不存在", "data": None}
 
+    # 只返回用户/AI 对话消息，工具执行记录（sender_type 3/4）不回放给前端
     messages = (
         db.query(ConsultationMessage)
-        .filter(ConsultationMessage.session_id == sid_int)
+        .filter(
+            ConsultationMessage.session_id == sid_int,
+            ConsultationMessage.sender_type.in_([1, 2]),
+        )
         .order_by(ConsultationMessage.created_at.asc())
         .all()
     )
@@ -434,7 +438,7 @@ async def stream_chat(
                     yield f"event: thinking\ndata: {json.dumps({'text': '多次执行出错，用已有信息整理回答'})}\n\n"
                     break
                 accumulated_tool_calls: dict[int, dict] = {}  # index -> {name, args}
-                has_content = False
+                round_text = ""  # 本轮文本：有工具调用的轮次视为思考过程，不进最终回复
 
                 async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, read=45.0)) as client:
                     request_json = {
@@ -496,8 +500,7 @@ async def stream_chat(
                                         content = re.sub(r'</[^>]*>', '', content)
                                         content = content.strip()
                                     if content.strip():
-                                        has_content = True
-                                        full_content += content
+                                        round_text += content
                                         # 工具调用过程中的文本发 thinking（折叠），不影响最终正文
                                         if accumulated_tool_calls:
                                             yield f"event: thinking\ndata: {json.dumps({'text': content})}\n\n"
@@ -510,8 +513,9 @@ async def stream_chat(
                 # 如果有工具调用，执行它们
                 if accumulated_tool_calls:
                     had_any_tool_calls = True
+                    # 本轮文本属于思考过程，保留在对话历史中供模型参考，但不计入最终回复
                     # 构建 assistant 消息（含 tool_calls）
-                    assistant_msg = {"role": "assistant", "content": full_content or None}
+                    assistant_msg = {"role": "assistant", "content": round_text or None}
                     tc_formatted = []
                     for idx in sorted(accumulated_tool_calls.keys()):
                         tc = accumulated_tool_calls[idx]
@@ -537,6 +541,7 @@ async def stream_chat(
                     tool_names: dict[str, str] = {}
                     tasks_to_run: list[dict] = []
 
+                    cap_reason = None  # 触发上限的原因；触发后剩余调用全部回填 skipped 响应，保证协议完整
                     for idx in sorted(accumulated_tool_calls.keys()):
                         tc = accumulated_tool_calls[idx]
                         try:
@@ -544,19 +549,26 @@ async def stream_chat(
                         except json.JSONDecodeError:
                             args_parsed = {}
 
-                        # 硬上限检查
-                        total_called = sum(tool_counts.values())
-                        if total_called >= MAX_TOTAL_TOOLS:
-                            yield f"event: thinking\ndata: {json.dumps({'text': '已达工具调用上限'})}\n\n"
-                            break
-                        if tc["name"] in ("search_web",) and tool_counts.get(tc["name"], 0) >= MAX_SEARCH_CALLS:
-                            yield f"event: thinking\ndata: {json.dumps({'text': '搜索次数已达上限，整理已有信息'})}\n\n"
-                            accumulated_tool_calls = {}
-                            break
-                        if tc["name"] in ("read_url", "extract_images") and tool_counts.get(tc["name"], 0) >= MAX_READ_CALLS:
-                            yield f"event: thinking\ndata: {json.dumps({'text': '读取已达上限，整理已有信息'})}\n\n"
-                            accumulated_tool_calls = {}
-                            break
+                        # 上限检查：不中断循环，确保每个 tool_call 最终都有对应 tool 响应
+                        if cap_reason is None:
+                            total_called = sum(tool_counts.values())
+                            if total_called >= MAX_TOTAL_TOOLS:
+                                cap_reason = "已达工具调用总上限"
+                            elif tc["name"] == "search_web" and tool_counts.get(tc["name"], 0) >= MAX_SEARCH_CALLS:
+                                cap_reason = "搜索次数已达上限"
+                            elif tc["name"] in ("read_url", "extract_images") and tool_counts.get(tc["name"], 0) >= MAX_READ_CALLS:
+                                cap_reason = "网页读取次数已达上限"
+                            if cap_reason:
+                                yield f"event: thinking\ndata: {json.dumps({'text': cap_reason + '，整理已有信息'})}\n\n"
+
+                        if cap_reason is not None:
+                            # 协议合规：被上限拦截的调用回填 tool 响应，避免悬空 tool_calls
+                            current_messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": json.dumps({"skipped": True, "reason": cap_reason}, ensure_ascii=False),
+                            })
+                            continue
 
                         # 去重：同一工具+参数
                         # read_url 做 URL 规范化（去尾部斜杠和参数差异）
@@ -566,6 +578,12 @@ async def stream_chat(
                         else:
                             dedup_key = f"{tc['name']}:{json.dumps(args_parsed, sort_keys=True, ensure_ascii=False)[:150]}"
                         if dedup_key in called_tools:
+                            # 协议合规：重复调用回填 tool 响应，避免悬空 tool_calls
+                            current_messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": json.dumps({"skipped": True, "reason": "重复调用，已忽略，请基于已有结果继续"}, ensure_ascii=False),
+                            })
                             continue
                         called_tools.add(dedup_key)
                         tool_counts[tc["name"]] = tool_counts.get(tc["name"], 0) + 1
@@ -590,7 +608,9 @@ async def stream_chat(
                         else:
                             long_tools_set = {"generate_presentation", "generate_weekly_video", "search_web", "read_url", "read_document", "extract_images"}
                             t_timeout = 300.0 if tc["name"] == "generate_weekly_video" else (120.0 if tc["name"] == "generate_presentation" else (30.0 if tc["name"] in long_tools_set else 15.0))
-                            task = asyncio.create_task(execute_tool(tc["name"], args_parsed, db))
+                            # 每个工具调用使用独立 DB Session，避免并发共享请求级 Session
+                            tool_db = SessionLocal()
+                            task = asyncio.create_task(execute_tool(tc["name"], args_parsed, tool_db))
                             try:
                                 result = await asyncio.wait_for(task, timeout=t_timeout)
                             except asyncio.TimeoutError:
@@ -600,6 +620,8 @@ async def stream_chat(
                                 except (asyncio.CancelledError, Exception):
                                     pass
                                 result = json.dumps({"error": "工具执行超时"}, ensure_ascii=False)
+                            finally:
+                                tool_db.close()
                         return {"tc": tc, "result": result, "dedup_key": dedup_key}
 
                     round_tasks = [asyncio.create_task(_run_one(d["tc"], d["args"], d["dedup_key"])) for d in tasks_to_run]
@@ -684,7 +706,8 @@ async def stream_chat(
                     # 继续循环让模型处理工具结果
                     continue
 
-                # 没有工具调用，结束循环
+                # 没有工具调用，本轮文本就是最终回复，结束循环
+                full_content += round_text
                 break
 
             # 强制清理所有残留运行中的任务
@@ -695,7 +718,7 @@ async def stream_chat(
 
             # 有工具调用且没有文本输出 → 追加总结请求
             if had_any_tool_calls and not full_content:
-                current_messages.append({"role": "user", "content": "请根据以上所有搜索结果，用简体中文整理一份详细的最终回答。不要搜索、不要调用工具、不要说你搜索的过程。列出找到的具体项目名称、链接和简介。"})
+                current_messages.append({"role": "user", "content": "请根据以上已经获取到的所有信息，用简体中文直接整理出最终回答。不要搜索、不要调用工具、不要描述你的执行过程，直接给用户有用的结论。"})
                 try:
                     async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, read=40.0)) as client:
                         async with client.stream(
