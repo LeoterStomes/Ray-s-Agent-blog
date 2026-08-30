@@ -419,6 +419,11 @@ async def stream_chat(
                                 chunk = json.loads(data_str)
                                 delta = chunk["choices"][0].get("delta", {})
 
+                                # 深度思考（reasoning_content）→ 实时推给前端思考卡片
+                                reasoning = delta.get("reasoning_content")
+                                if reasoning:
+                                    yield f"event: thinking\ndata: {json.dumps({'text': reasoning})}\n\n"
+
                                 # 处理工具调用（先检测，因为有工具调用时内容要扣住）
                                 tc_list = delta.get("tool_calls")
                                 if tc_list:
@@ -704,7 +709,11 @@ async def stream_chat(
                                 if data_str == "[DONE]": break
                                 try:
                                     chunk = json.loads(data_str)
-                                    text = chunk["choices"][0].get("delta", {}).get("content", "")
+                                    f_delta = chunk["choices"][0].get("delta", {})
+                                    f_reasoning = f_delta.get("reasoning_content")
+                                    if f_reasoning:
+                                        yield f"event: thinking\ndata: {json.dumps({'text': f_reasoning})}\n\n"
+                                    text = f_delta.get("content", "")
                                     if text:
                                         full_content += text
                                         yield f"event: message\ndata: {json.dumps({'text': text})}\n\n"
