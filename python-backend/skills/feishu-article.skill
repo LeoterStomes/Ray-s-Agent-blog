@@ -6,8 +6,8 @@
 飞书文档、飞书链接、飞书知识库、飞书wiki、飞书云文档、飞书转博客、飞书转文章、飞书文档美化、飞书文档排版、飞书内容整理、飞书文章、把飞书整理成文章、feishu、lark
 
 ## tools
-- `read_url`
-- `read_document`
+- `mcp_feishu__getWikiDoc`
+- `mcp_feishu__getDocx`
 - `search_articles`
 - `get_categories`
 - `create_draft`
@@ -15,8 +15,8 @@
 
 ## workflow
 1. **读原文**（来源优先判断）：
-   - 飞书文档链接 → 用 `read_url` 读取（需公开分享权限）
-   - 导出的 docx / pdf → 用 `read_document` 读取
+   - 飞书知识库/wiki 链接（`feishu.cn/wiki/<token>`）→ 用 `mcp_feishu__getWikiDoc`，token 取 URL 里 `wiki/` 后面那段
+   - 飞书文档/docx 链接（`feishu.cn/docx/<token>`）→ 用 `mcp_feishu__getDocx`，token 取 URL 里 `docx/` 后面那段
    - 用户直接粘贴文本 → 直接用粘贴文本
    - 读不到就如实告知，请用户粘贴或导出，**严禁编造内容**
 2. **提炼主旨**：通读后提炼「主题大意 + 核心模块」作为排版骨架
