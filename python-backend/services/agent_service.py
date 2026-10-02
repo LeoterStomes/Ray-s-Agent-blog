@@ -503,7 +503,7 @@ async def _search_web(query, engine="auto"):
             if result: return result
         except (_asyncio.TimeoutError, Exception):
             continue
-    return json.dumps({"query": query, "results": "搜索超时或暂无结果，请稍后重试"}, ensure_ascii=False)
+    return json.dumps({"query": query, "results": "搜索超时：可能是网络不稳定（部分搜索引擎在国内无法访问），建议打开 VPN 后重试"}, ensure_ascii=False)
 
 
 def _extract_text(html):
