@@ -56,7 +56,7 @@ def _use_skill(skill_name: str) -> str:
     body = get_skill_body(skill_name)
     if not body:
         return json.dumps({"error": f"未找到技能 '{skill_name}'", "available_skills": build_skill_index()}, ensure_ascii=False)
-    return body
+    return json.dumps({"skill": skill_name, "content": body}, ensure_ascii=False)
 
 def _search_articles(db, query, limit=5):
     """全库语义搜索（博客文章 + 外部文档）+ LIKE 降级"""

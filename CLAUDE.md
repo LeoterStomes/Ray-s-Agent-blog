@@ -119,6 +119,7 @@ astro-blog/src/
 - **2026-05-23** 文章详情页增加右侧推荐栏：同分类文章推荐（自动过滤当前文章），取前3篇，带封面/标题/阅读数，无推荐时隐藏。
 
 ## 最近修复记录
+- **2026-10-02** 修复 use_skill 返回非 JSON 导致 agent 流中断：`_use_skill` 改返回 `json.dumps({"skill", "content"})`；chat.py 工具结果 SSE 事件加 `json.loads` 防御（非 JSON 回退为文本）
 - **2026-10-02** 修正 feishu-article.skill 读取工具：飞书 MCP 真实工具是 `getWikiDoc`/`getDocx`（读取），不是 send_message/send_card；改回用 `mcp_feishu__getWikiDoc`/`mcp_feishu__getDocx` 读飞书文档，同步更新前端 toolNames.ts 映射
 - **2026-10-02** Skills 架构重构：关键字注入 →「技能目录常驻 + use_skill 按需加载」。新增 feishu-article.skill（飞书文档→博客，忠于原文）；12 个 skill 各补 `## description`；prompt_builder 移除 `_trigger_score`/`MAX_SKILLS_PER_TURN`/`exclusive` 关键字路由；agent_service 新增 `use_skill` 工具
 - **2026-07-18** 跨会话记忆（Mem0）：自动提取/去重/合并事实，替换手写 ChromaDB 压缩

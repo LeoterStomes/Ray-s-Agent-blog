@@ -638,7 +638,11 @@ async def stream_chat(
                             except Exception:
                                 pass
 
-                        yield f"event: tool_result\ndata: {json.dumps({'tool': tc['name'], 'result': json.loads(result) if result else {}})}\n\n"
+                        try:
+                            result_parsed = json.loads(result) if result else {}
+                        except Exception:
+                            result_parsed = {"text": str(result)}
+                        yield f"event: tool_result\ndata: {json.dumps({'tool': tc['name'], 'result': result_parsed})}\n\n"
                         await asyncio.sleep(0.01)
 
                         current_messages.append({
