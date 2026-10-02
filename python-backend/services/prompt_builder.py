@@ -37,7 +37,7 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
 
 
 def _parse_skill(text: str, stem: str) -> dict:
-    """解析 .skill 文件：# 标题作为名称，## trigger 段作为触发词"""
+    """解析 .skill 文件：# 标题作为名称，## trigger 段作为触发词，## exclusive 段作为独占标记"""
     name = stem
     m = re.search(r"^#\s+(.+)$", text, re.M)
     if m:
@@ -46,7 +46,13 @@ def _parse_skill(text: str, stem: str) -> dict:
     tm = re.search(r"^##\s*trigger\s*\n(.*?)(?=^##\s|\Z)", text, re.M | re.S)
     if tm:
         triggers = [t.strip() for t in re.split(r"[、,，/\n]+", tm.group(1)) if t.strip()]
-    return {"name": name, "body": text.strip(), "triggers": triggers}
+    # 独占标记：命中后只注入该 skill，排除其他 skill（如飞书场景不混入 content-writer）
+    exclusive = False
+    em = re.search(r"^##\s*exclusive\s*\n(.*?)(?=^##\s|\Z)", text, re.M | re.S)
+    if em:
+        val = em.group(1).strip().lower()
+        exclusive = val in ("", "true", "yes", "1", "独占", "是")
+    return {"name": name, "body": text.strip(), "triggers": triggers, "exclusive": exclusive}
 
 
 def load_all():
@@ -124,6 +130,12 @@ def build_system_prompt(match_text: str, inherited: dict | None = None) -> tuple
         for sk in _skill_registry:
             if sk["name"] in prev_skills:
                 selected_skills.append((0, sk["name"]))
+
+    # 独占 skill：命中即只注入得分最高的那个，排除其他 skill（如飞书场景不混入 content-writer）
+    _excl = [(s, n) for s, n in selected_skills
+             if next((sk for sk in _skill_registry if sk["name"] == n), {}).get("exclusive")]
+    if _excl:
+        selected_skills = [_excl[0]]
 
     skill_names = {name for _, name in selected_skills}
     if skill_names:

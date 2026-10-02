@@ -84,3 +84,12 @@ python-backend/logs/
 
 #忽视指定 exe 文件
 /ffmpeg.exe
+
+#忽略指定 md 文件
+/AGENTS.md
+/CHANGELOG.md
+/CLAUDE.md
+/README.md
+
+#忽略所有批处理
+*.bat

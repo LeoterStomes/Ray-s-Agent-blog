@@ -1,0 +1,79 @@
+# Feishu Article Beautifier / 飞书文章美化
+## trigger
+飞书文档、飞书链接、飞书知识库、飞书wiki、飞书云文档、飞书转博客、飞书转文章、飞书文档美化、飞书文档排版、飞书内容整理、飞书文章、把飞书整理成文章、feishu、lark
+
+## exclusive
+独占
+
+## tools
+- `read_url`
+- `read_document`
+- `search_articles`
+- `get_categories`
+- `create_draft`
+- `make_mindmap`
+
+## workflow
+1. **读原文**（来源优先判断）：
+   - 飞书文档链接 → 用 `read_url` 读取（需公开分享权限）
+   - 导出的 docx / pdf → 用 `read_document` 读取
+   - 用户直接粘贴文本 → 直接用粘贴文本
+   - 读不到就如实告知，请用户粘贴或导出，**严禁编造内容**
+2. **提炼主旨**：通读后提炼「主题大意 + 核心模块」作为排版骨架
+3. **查重**：用 `search_articles` 搜索，避免与已有文章重复
+4. **确定分类**：用 `get_categories` 选合适分类（如 python 专栏 ID:5）；需新分类则引导用户在管理后台创建
+5. **生成草稿**：用 `create_draft` 创建，content 严格按下方深色 HTML 模板，设置 title / summary / tags / category_id
+6. **脑图（可选）**：结构层级 4 层以上 → 用 `make_mindmap`，得到的 iframe 原样写入 content，只调一次
+
+## HTML 模板（深色主题 + GitHub Dark 代码高亮）
+
+### 表格
+```html
+<table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px">
+  <thead><tr style="background:#1e293b;color:#e2e8f0">
+    <th style="padding:10px 14px;border:1px solid #334155;text-align:left">列名</th>
+  </tr></thead>
+  <tbody><tr style="background:#0f172a">
+    <td style="padding:8px 14px;border:1px solid #1e293b;color:#cbd5e1">数据</td>
+  </tr></tbody>
+</table>
+```
+
+### 要点卡片
+```html
+<div style="background:#1e1b4b;border-left:4px solid #6366f1;padding:12px 16px;margin:16px 0;border-radius:0 8px 8px 0;color:#c7d2fe">
+  <strong>📌 要点</strong><p style="color:#a5b4fc;margin:4px 0">内容</p>
+</div>
+```
+
+### 代码块（GitHub Dark 语法高亮）
+- 关键字（import / def / for / class 等）→ `#ff7b72`
+- 字符串 → `#79c0ff`
+- 注释 → `#8b949e`
+- 背景 `#0d1117` / 边框 `#1e293b` / 正文 `#e2e8f0`
+```html
+<pre style="background:#0d1117;color:#e2e8f0;padding:16px 20px;border-radius:8px;overflow-x:auto;border:1px solid #1e293b;font-size:14px;line-height:1.7"><code><span style="color:#ff7b72">import</span> <span style="color:#79c0ff">os</span>  <span style="color:#8b949e"># 导入模块</span></code></pre>
+```
+
+### 引用
+```html
+<blockquote style="border-left:3px solid #6366f1;background:#1e1b4b;padding:10px 16px;margin:12px 0;border-radius:0 8px 8px 0;color:#c7d2fe">引用内容</blockquote>
+```
+
+### 列表与分隔
+```html
+<ul style="color:#e2e8f0"><li>要点</li></ul>
+<hr style="border:none;border-top:1px solid #1e293b;margin:24px 0">
+```
+
+## rules
+- **冲突裁决：若本 skill 与 Content Writer 同时命中，以本 skill 为准** —— 不联网找素材（不用 `search_web`），忠于原文只做整理 + 补充
+- **核心原则：保留原文主题大意，只做整理 + 适度补充**，绝不偏离主旨
+- 标题从 `<h2>` 开始，不手写 `<h1>`
+- 表格必须有 thead / tbody + 内联样式
+- 技术文章必须有代码块 + GitHub Dark 语法高亮（关键字 #ff7b72 / 字符串 #79c0ff / 注释 #8b949e）
+- 每 2-3 段插入卡片 / 引用 / 列表 / 分隔线
+- 新增内容只用于「补充不足」，不写与主旨无关的扩展
+- 脑图用 `make_mindmap`（不是 MCP 版），iframe 原样写入，只调一次，严禁编造 url
+- 颜色统一深色主题，不混用浅色
+- 末尾附 `<hr>` + 参考来源
