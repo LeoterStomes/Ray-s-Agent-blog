@@ -72,7 +72,7 @@ async def _compress_and_store(session_id: int, user_id: int):
 
 
 # ── 权限控制 ──
-WRITE_TOOLS = {"create_draft", "export_file"}  # 仅 admin(user_type=2) 可用的工具
+WRITE_TOOLS = {"create_draft", "export_file", "update_article", "set_status", "delete_article"}  # 仅 admin(user_type=2) 可用的工具
 
 def _filter_tools_for_user(db: Session, user_id: int) -> list[dict]:
     """根据用户角色过滤工具列表：admin 全部可用，普通用户移除写工具"""

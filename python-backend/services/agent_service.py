@@ -16,6 +16,10 @@ TOOLS_SCHEMA = [
     {"type":"function","function":{"name":"read_url","description":"Read any webpage URL and return text content","parameters":{"type":"object","properties":{"url":{"type":"string","description":"Full URL to read"}},"required":["url"]}}},
     {"type":"function","function":{"name":"get_recent_articles","description":"Get the most recent published articles","parameters":{"type":"object","properties":{"limit":{"type":"integer","description":"Max results, default 5","default":5}}}}},
     {"type":"function","function":{"name":"create_draft","description":"Create a draft blog article","parameters":{"type":"object","properties":{"title":{"type":"string","description":"Article title"},"content":{"type":"string","description":"Article content (HTML)"},"summary":{"type":"string","description":"Summary, optional"},"tags":{"type":"string","description":"Comma-separated tags"},"category_id":{"type":"integer","description":"Category ID, optional"}},"required":["title","content"]}}},
+    {"type":"function","function":{"name":"update_article","description":"Update an existing article/draft by ID. Change title/content/summary/tags/category. Use get_article first to read current content, then edit it.","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Article ID (UUID)"},"title":{"type":"string","description":"New title (optional)"},"content":{"type":"string","description":"New HTML content (optional)"},"summary":{"type":"string","description":"New summary (optional)"},"tags":{"type":"string","description":"New comma-separated tags (optional)"},"category_id":{"type":"integer","description":"New category ID (optional)"}},"required":["article_id"]}}},
+    {"type":"function","function":{"name":"list_drafts","description":"List draft articles (status=draft). Use to find the ID of a draft so you can edit or publish it.","parameters":{"type":"object","properties":{"limit":{"type":"integer","description":"Max results, default 10","default":10}}}}},
+    {"type":"function","function":{"name":"set_status","description":"Publish (status=1) or unpublish/draft (status=0) an article by ID.","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Article ID (UUID)"},"status":{"type":"integer","description":"1=publish, 0=unpublish"}},"required":["article_id","status"]}}},
+    {"type":"function","function":{"name":"delete_article","description":"Delete an article/draft by ID.","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Article ID (UUID)"}},"required":["article_id"]}}},
     {"type":"function","function":{"name":"make_mindmap","description":"Generate a mind map HTML file for embedding in blog articles. Returns a public URL and iframe code to insert into article content. Use this ONLY when writing/publishing articles, NOT for showing mind maps in chat.","parameters":{"type":"object","properties":{"markdown":{"type":"string","description":"Markdown outline for the mind map"}},"required":["markdown"]}}},
     {"type":"function","function":{"name":"read_document","description":"Read PDF/DOC/DOCX document content from URL","parameters":{"type":"object","properties":{"url":{"type":"string","description":"Document URL"}},"required":["url"]}}},
     {"type":"function","function":{"name":"summarize_url","description":"Summarize a webpage URL using AI. Returns a concise Chinese summary","parameters":{"type":"object","properties":{"url":{"type":"string","description":"Webpage URL to summarize"}},"required":["url"]}}},
@@ -36,6 +40,10 @@ async def execute_tool(name: str, args: dict, db: Session) -> str:
     elif name == "read_url": return await _read_url(args.get("url",""))
     elif name == "get_recent_articles": return _get_recent(db, args.get("limit",5))
     elif name == "create_draft": return _create_draft(db, args)
+    elif name == "update_article": return _update_article(db, args)
+    elif name == "list_drafts": return _list_drafts(db, args.get("limit", 10))
+    elif name == "set_status": return _set_status(db, args)
+    elif name == "delete_article": return _delete_article(db, args.get("article_id",""))
     elif name == "read_document": return await _read_document(args.get("url",""))
     elif name == "summarize_url": return await _summarize_url(args.get("url",""))
     elif name == "summarize_text": return await _summarize_text(args.get("content",""), args.get("max_length",300))
@@ -150,6 +158,58 @@ def _create_draft(db, args):
         db.add(a); db.commit()
         return json.dumps({"id":a.id,"title":title,"url":f"/blog/{a.id}","status":"draft"}, ensure_ascii=False)
     except Exception as e: return json.dumps({"error":str(e)}, ensure_ascii=False)
+
+def _update_article(db, args):
+    aid = args.get("article_id","")
+    if not aid: return json.dumps({"error":"Need article_id"}, ensure_ascii=False)
+    data = {}
+    for f in ["title","summary","content","tags"]:
+        if args.get(f) is not None:
+            data[f] = args[f]
+    if args.get("category_id") is not None:
+        data["categoryId"] = args["category_id"]
+    if not data:
+        return json.dumps({"error":"Nothing to update"}, ensure_ascii=False)
+    try:
+        from services.article_service import update_article
+        if update_article(db, aid, data):
+            return json.dumps({"id":aid,"status":"updated"}, ensure_ascii=False)
+        return json.dumps({"error":f"文章不存在: {aid}"}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error":str(e)}, ensure_ascii=False)
+
+def _list_drafts(db, limit=10):
+    try:
+        rows = (db.query(KnowledgeArticle).filter(KnowledgeArticle.status == 0)
+                .order_by(KnowledgeArticle.published_at.desc()).limit(min(max(limit,1),50)).all())
+        drafts = [{"id":a.id,"title":a.title,"tags":a.tags or ""} for a in rows]
+        return json.dumps({"count":len(drafts),"drafts":drafts}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error":str(e)}, ensure_ascii=False)
+
+def _set_status(db, args):
+    aid = args.get("article_id","")
+    status = args.get("status")
+    if not aid or status is None:
+        return json.dumps({"error":"Need article_id and status"}, ensure_ascii=False)
+    try:
+        from services.article_service import set_status
+        st = int(status)
+        if set_status(db, aid, st):
+            return json.dumps({"id":aid,"status":"published" if st==1 else "draft"}, ensure_ascii=False)
+        return json.dumps({"error":f"文章不存在: {aid}"}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error":str(e)}, ensure_ascii=False)
+
+def _delete_article(db, aid):
+    if not aid: return json.dumps({"error":"Need article_id"}, ensure_ascii=False)
+    try:
+        from services.article_service import delete
+        if delete(db, aid):
+            return json.dumps({"id":aid,"status":"deleted"}, ensure_ascii=False)
+        return json.dumps({"error":f"文章不存在: {aid}"}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error":str(e)}, ensure_ascii=False)
 
 def _a2d(a):
     return {"id":a.id,"title":a.title,"summary":a.summary,

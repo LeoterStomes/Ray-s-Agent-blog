@@ -18,6 +18,13 @@ version: 1
 → 脑图见 mindmap-guide.md
 → RAG 详细规则见 rag-kb.skill
 
+## 文章编辑工具
+- 编辑已有文章/草稿：`update_article`（先 `get_article` 读原文，再改 title / content / summary / tags / category）
+- 找草稿：`list_drafts` 列出所有草稿及 ID（找不到草稿 ID 时用它）
+- 发布/下架：`set_status`（status=1 发布，0 下架回草稿）
+- 删除：`delete_article`
+- 这些是写操作，仅管理员可用；普通用户只读
+
 ## 最新功能
 - **视频周报**：`generate_weekly_video` — PPT + 配音 → MP4 视频，同步返回 .pptx 和 .mp4
 - **API 管理**：管理后台「API Key」可在线修改 DeepSeek/百度/邮件/飞书 等密钥
