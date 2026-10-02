@@ -2,11 +2,11 @@
 
 职责：
 - 加载 prompts/*.md（frontmatter 驱动：always / triggers）
-- 加载 skills/*.skill（解析 ## trigger 段，注册表化）
-- 按需组装 system prompt：常驻 prompt + 触发命中的 prompt + 最多 MAX_SKILLS_PER_TURN 个 skill
-- 触发匹配使用"当前消息 + 最近用户消息"合并文本；跟进消息无命中时由调用方继承上一轮匹配
+- 加载 skills/*.skill（解析 ## trigger / ## description 段，注册表化）
+- 组装 system prompt：常驻 prompt + 命中触发的 prompt + 技能目录（常驻）
+- 技能不再关键字注入正文，改为「技能目录常驻 + agent 调用 use_skill 按需加载」
 
-设计原则：skill 不再全量注入，避免注意力稀释与指令冲突。
+设计原则：技能全文不注入，避免注意力稀释与指令冲突；agent 依据目录自主判断后按需拉取。
 """
 import re
 from pathlib import Path
@@ -15,10 +15,8 @@ _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 _SKILLS_DIR = Path(__file__).parent.parent / "skills"
 
 _prompt_registry: list[dict] = []   # {name, body, triggers, always}
-_skill_registry: list[dict] = []    # {name, body, triggers}
+_skill_registry: list[dict] = []    # {name, stem, body, triggers, description}
 _always_prompts: list[str] = []
-
-MAX_SKILLS_PER_TURN = 2  # 每轮最多注入的 skill 数，防止工作流互相打架
 
 
 def _parse_frontmatter(text: str) -> tuple[dict, str]:
@@ -37,7 +35,7 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
 
 
 def _parse_skill(text: str, stem: str) -> dict:
-    """解析 .skill 文件：# 标题作为名称，## trigger 段作为触发词，## exclusive 段作为独占标记"""
+    """解析 .skill 文件：# 标题作为名称，## trigger 段作为触发词，## description 段作为一句话说明"""
     name = stem
     m = re.search(r"^#\s+(.+)$", text, re.M)
     if m:
@@ -46,13 +44,11 @@ def _parse_skill(text: str, stem: str) -> dict:
     tm = re.search(r"^##\s*trigger\s*\n(.*?)(?=^##\s|\Z)", text, re.M | re.S)
     if tm:
         triggers = [t.strip() for t in re.split(r"[、,，/\n]+", tm.group(1)) if t.strip()]
-    # 独占标记：命中后只注入该 skill，排除其他 skill（如飞书场景不混入 content-writer）
-    exclusive = False
-    em = re.search(r"^##\s*exclusive\s*\n(.*?)(?=^##\s|\Z)", text, re.M | re.S)
-    if em:
-        val = em.group(1).strip().lower()
-        exclusive = val in ("", "true", "yes", "1", "独占", "是")
-    return {"name": name, "body": text.strip(), "triggers": triggers, "exclusive": exclusive}
+    description = ""
+    dm = re.search(r"^##\s*description\s*\n(.*?)(?=^##\s|\Z)", text, re.M | re.S)
+    if dm:
+        description = dm.group(1).strip()
+    return {"name": name, "stem": stem, "body": text.strip(), "triggers": triggers, "description": description}
 
 
 def load_all():
@@ -85,21 +81,45 @@ def load_all():
                 pass
 
 
-def _trigger_score(triggers: list[str], text_lower: str) -> int:
-    """命中触发词的总长度：更长=更具体=优先级更高"""
-    return sum(len(t) for t in triggers if t and t.lower() in text_lower)
+def build_skill_index() -> str:
+    """技能目录（紧凑）：常驻注入 system prompt，供 agent 判断后按需 use_skill 加载"""
+    if not _skill_registry:
+        return ""
+    lines = [
+        "## 可用技能目录",
+        "下面是你可用的技能。先判断当前任务是否需要某个技能：需要时调用 `use_skill` 工具加载它的完整流程与规则（一次加载一个），不需要则忽略。",
+        "",
+    ]
+    for sk in _skill_registry:
+        desc = sk["description"] or "、".join(sk["triggers"][:5])
+        lines.append(f"- **{sk['name']}**（`{sk['stem']}`）—— {desc}")
+    return "\n".join(lines)
+
+
+def get_skill_body(name: str) -> str | None:
+    """按名称/文件名返回 skill 完整内容（供 use_skill 工具调用）"""
+    if not name:
+        return None
+    key = name.strip().lower()
+    for sk in _skill_registry:
+        if key in (sk["name"].lower(), sk["stem"].lower()):
+            return sk["body"]
+    # 模糊匹配：名称或文件名包含关键词，且唯一时返回
+    hits = [sk for sk in _skill_registry if key in sk["name"].lower() or key in sk["stem"].lower()]
+    if len(hits) == 1:
+        return hits[0]["body"]
+    return None
 
 
 def build_system_prompt(match_text: str, inherited: dict | None = None) -> tuple[str, dict]:
     """组装 system prompt。
 
-    match_text: 用于触发匹配的文本（当前消息 + 最近用户消息），调用方需已转小写
-    inherited: 上一轮匹配结果 {"prompts": set, "skills": set}；本轮无命中时继承
-    返回 (prompt_text, {"prompts": set, "skills": set})
+    match_text: 用于 prompt 触发匹配的文本（当前消息 + 最近用户消息），调用方需已转小写
+    inherited: 上一轮匹配结果 {"prompts": set}；本轮无命中时继承
+    返回 (prompt_text, {"prompts": set, "skills": set})；skills 恒为空（技能改为 use_skill 按需加载）
     """
     matched_bodies = list(_always_prompts)
     matched_prompts: set[str] = set()
-    matched_skills: list[tuple[int, str]] = []  # (score, name)
 
     # prompts：命中即注入（体量小，不设上限）
     for entry in _prompt_registry:
@@ -111,42 +131,20 @@ def build_system_prompt(match_text: str, inherited: dict | None = None) -> tuple
                 matched_prompts.add(entry["name"])
                 break
 
-    # skills：按触发词特异度评分，只注入 top N
-    for sk in _skill_registry:
-        score = _trigger_score(sk["triggers"], match_text)
-        if score > 0:
-            matched_skills.append((score, sk["name"]))
-    matched_skills.sort(key=lambda x: -x[0])
-    selected_skills = matched_skills[:MAX_SKILLS_PER_TURN]
-
-    # 跟进消息无命中 → 继承上一轮匹配（"继续"、"然后呢"等场景）
-    if not matched_prompts and not selected_skills and inherited:
+    # 跟进消息无命中 → 继承上一轮 prompt 匹配（"继续"、"然后呢"等场景）
+    if not matched_prompts and inherited:
         prev_prompts = set(inherited.get("prompts", set()))
-        prev_skills = set(inherited.get("skills", set()))
         for entry in _prompt_registry:
             if entry["name"] in prev_prompts and not entry["always"]:
                 matched_bodies.append(entry["body"])
                 matched_prompts.add(entry["name"])
-        for sk in _skill_registry:
-            if sk["name"] in prev_skills:
-                selected_skills.append((0, sk["name"]))
 
-    # 独占 skill：命中即只注入得分最高的那个，排除其他 skill（如飞书场景不混入 content-writer）
-    _excl = [(s, n) for s, n in selected_skills
-             if next((sk for sk in _skill_registry if sk["name"] == n), {}).get("exclusive")]
-    if _excl:
-        selected_skills = [_excl[0]]
+    # 技能目录常驻注入（技能正文由 agent 按需 use_skill 加载）
+    matched_bodies.append(build_skill_index())
 
-    skill_names = {name for _, name in selected_skills}
-    if skill_names:
-        parts = [sk["body"] for sk in _skill_registry if sk["name"] in skill_names]
-        matched_bodies.append(
-            "## 当前任务适用技能\n按匹配到的 Skill workflow 顺序调用工具：\n\n" + "\n\n".join(parts)
-        )
-
-    return "\n\n".join(matched_bodies), {"prompts": matched_prompts, "skills": skill_names}
+    return "\n\n".join(matched_bodies), {"prompts": matched_prompts, "skills": set()}
 
 
 # 启动时加载
 load_all()
-print(f"[Prompt] 加载 {len(_prompt_registry)} 个 prompt ({len(_always_prompts)} 常驻) + {len(_skill_registry)} 个 skill（按需注入）")
+print(f"[Prompt] 加载 {len(_prompt_registry)} 个 prompt ({len(_always_prompts)} 常驻) + {len(_skill_registry)} 个 skill（目录常驻，use_skill 按需加载）")

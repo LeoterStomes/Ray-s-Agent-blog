@@ -119,7 +119,7 @@ astro-blog/src/
 - **2026-05-23** 文章详情页增加右侧推荐栏：同分类文章推荐（自动过滤当前文章），取前3篇，带封面/标题/阅读数，无推荐时隐藏。
 
 ## 最近修复记录
-- **2026-10-02** 新增 feishu-article.skill（飞书文档→博客文章美化）+ `## exclusive` 独占标记机制：命中独占 skill 时只注入它、排除其他 skill（prompt_builder.py）
+- **2026-10-02** Skills 架构重构：关键字注入 →「技能目录常驻 + use_skill 按需加载」。新增 feishu-article.skill（飞书文档→博客，忠于原文）；12 个 skill 各补 `## description`；prompt_builder 移除 `_trigger_score`/`MAX_SKILLS_PER_TURN`/`exclusive` 关键字路由；agent_service 新增 `use_skill` 工具
 - **2026-07-18** 跨会话记忆（Mem0）：自动提取/去重/合并事实，替换手写 ChromaDB 压缩
 - **2026-07-18** Agent 死循环防护：8 道防线（去重/硬上限/分类限制/断路器/超时取消/兜底/双层 break）
 - **2026-07-18** 搜索引擎升级：DuckDuckGo→Bing→SearXNG 三引擎 + `extract_images` 提取网页图片
@@ -168,7 +168,7 @@ astro-blog/src/
 - **会话持久化**：`watch(sessionId)` → localStorage → 文章页浮钮 onclick 带回 `/agent?session=xxx`
 - **提示词**：System Prompt 含博客功能说明 + 角色语气 + 自动联网兜底 + 实时用户信息
 - **工具**：search_articles / get_article / get_categories / recommend_articles / search_web(多引擎) / read_url / get_recent_articles / create_draft / read_document / summarize_url / summarize_text / export_file
-- **Skills**：12 个 .skill 文件（content-writer / feishu-article / researcher / reader-helper / multi-search / proactive / summarize / export / mindmap / rag-kb / weekly-report / whitepaper），启动时加载到 System Prompt
+- **Skills**：12 个 .skill 文件（content-writer / feishu-article / researcher / reader-helper / multi-search / proactive / summarize / export / mindmap / rag-kb / weekly-report / whitepaper），技能目录常驻注入 system prompt，agent 判断后调用 `use_skill` 工具按需加载完整流程
 - **导出**：`services/export_service.py` (PDF/DOCX/TXT)，前端绿色内联下载卡片，刷新不丢失
 - **AI 摘要**：`services/summarize.py` 调用 DeepSeek 生成中文摘要
 - **前端浮窗**：AIChatWidget.vue 块级渲染 + 展开按钮 + 附件上传 + 终止按钮 + 历史管理

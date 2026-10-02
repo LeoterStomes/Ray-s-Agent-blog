@@ -1,9 +1,9 @@
 # Feishu Article Beautifier / 飞书文章美化
+## description
+把飞书文档转成博客文章，忠于原文只整理+适度补充，不联网找素材
+
 ## trigger
 飞书文档、飞书链接、飞书知识库、飞书wiki、飞书云文档、飞书转博客、飞书转文章、飞书文档美化、飞书文档排版、飞书内容整理、飞书文章、把飞书整理成文章、feishu、lark
-
-## exclusive
-独占
 
 ## tools
 - `read_url`
@@ -67,7 +67,6 @@
 ```
 
 ## rules
-- **冲突裁决：若本 skill 与 Content Writer 同时命中，以本 skill 为准** —— 不联网找素材（不用 `search_web`），忠于原文只做整理 + 补充
 - **核心原则：保留原文主题大意，只做整理 + 适度补充**，绝不偏离主旨
 - 标题从 `<h2>` 开始，不手写 `<h1>`
 - 表格必须有 thead / tbody + 内联样式

@@ -1,4 +1,7 @@
 # File Exporter
+## description
+把内容导出为 PDF / DOCX / TXT 文件
+
 ## trigger
 导出、下载、保存为、生成PDF、生成Word、导出为文件、下载文档、生成文件、保存文档
 

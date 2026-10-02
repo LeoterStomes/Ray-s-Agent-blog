@@ -1,4 +1,7 @@
 # Mindmap / 思维导图
+## description
+生成思维导图/脑图（文章内嵌用 make_mindmap，对话展示用 MCP 版）
+
 ## trigger
 脑图、思维导图、mindmap、画个图、层级图、结构图、帮我整理成图、可视化、树状图
 

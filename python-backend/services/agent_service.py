@@ -7,6 +7,7 @@ from sqlalchemy import or_
 from models import KnowledgeArticle, KnowledgeCategory
 
 TOOLS_SCHEMA = [
+    {"type":"function","function":{"name":"use_skill","description":"加载一个技能的完整操作流程与规则。先看 system prompt 里的「可用技能目录」判断需要哪个技能，再调用本工具获取它的详细步骤（workflow + tools + rules）。一次加载一个。","parameters":{"type":"object","properties":{"skill_name":{"type":"string","description":"技能名称，用目录里的名称或文件名，如 'Content Writer' 或 'feishu-article'"}},"required":["skill_name"]}}},
     {"type":"function","function":{"name":"search_articles","description":"Semantic search the entire knowledge base (blog articles + imported reference docs like PDFs). Returns relevant chunks with similarity scores. Use this for any knowledge lookup - one search covers everything.","parameters":{"type":"object","properties":{"query":{"type":"string","description":"Search query in natural language"},"limit":{"type":"integer","description":"Max results, default 5","default":5}},"required":["query"]}}},
     {"type":"function","function":{"name":"get_article","description":"Get full article content by ID","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Article ID (UUID)"}},"required":["article_id"]}}},
     {"type":"function","function":{"name":"get_categories","description":"List all blog categories with article counts","parameters":{"type":"object","properties":{}}}},
@@ -26,7 +27,8 @@ TOOLS_SCHEMA = [
 ]
 
 async def execute_tool(name: str, args: dict, db: Session) -> str:
-    if name == "search_articles": return _search_articles(db, args.get("query",""), args.get("limit",5))
+    if name == "use_skill": return _use_skill(args.get("skill_name",""))
+    elif name == "search_articles": return _search_articles(db, args.get("query",""), args.get("limit",5))
     elif name == "get_article": return _get_article(db, args.get("article_id",""))
     elif name == "get_categories": return _get_categories(db)
     elif name == "recommend_articles": return _recommend_articles(db, args.get("article_id",""), args.get("limit",3))
@@ -45,6 +47,16 @@ async def execute_tool(name: str, args: dict, db: Session) -> str:
     return json.dumps({"error":f"Unknown tool: {name}"}, ensure_ascii=False)
 
 # --- implementations ---
+
+def _use_skill(skill_name: str) -> str:
+    """加载指定技能的完整流程，返回给 agent 遵循"""
+    if not skill_name or not skill_name.strip():
+        return json.dumps({"error": "需要提供技能名称"}, ensure_ascii=False)
+    from services.prompt_builder import get_skill_body, build_skill_index
+    body = get_skill_body(skill_name)
+    if not body:
+        return json.dumps({"error": f"未找到技能 '{skill_name}'", "available_skills": build_skill_index()}, ensure_ascii=False)
+    return body
 
 def _search_articles(db, query, limit=5):
     """全库语义搜索（博客文章 + 外部文档）+ LIKE 降级"""

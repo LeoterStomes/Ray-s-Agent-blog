@@ -1,4 +1,7 @@
 # RAG Knowledge Base Search
+## description
+搜索知识库（博客文章+外部文档），语义检索+交叉验证+来源标注
+
 ## trigger
 查一下、搜索、搜一下、帮我找、有没有、怎么用、什么是、文档、资料、参考、教程、廖雪峰、
 Python、JavaScript、编程、技术问题、代码怎么写、API、框架、库、方法论、概念解释、
