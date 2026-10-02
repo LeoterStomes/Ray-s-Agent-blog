@@ -1,6 +1,6 @@
 # Feishu Article Beautifier / 飞书文章美化
 ## description
-把飞书文档转成博客文章，忠于原文只整理+适度补充，不联网找素材
+把飞书文档转成博客文章：以原文为骨架整理，联网搜索补全不到位的知识点
 
 ## trigger
 飞书文档、飞书链接、飞书知识库、飞书wiki、飞书云文档、飞书转博客、飞书转文章、飞书文档美化、飞书文档排版、飞书内容整理、飞书文章、把飞书整理成文章、feishu、lark
@@ -9,6 +9,8 @@
 - `mcp_feishu__getWikiDoc`
 - `mcp_feishu__getDocx`
 - `search_articles`
+- `search_web`
+- `read_url`
 - `get_categories`
 - `create_draft`
 - `make_mindmap`
@@ -19,11 +21,12 @@
    - 飞书文档/docx 链接（`feishu.cn/docx/<token>`）→ 用 `mcp_feishu__getDocx`，token 取 URL 里 `docx/` 后面那段
    - 用户直接粘贴文本 → 直接用粘贴文本
    - 读不到就如实告知，请用户粘贴或导出，**严禁编造内容**
-2. **提炼主旨**：通读后提炼「主题大意 + 核心模块」作为排版骨架
-3. **查重**：用 `search_articles` 搜索，避免与已有文章重复
-4. **确定分类**：用 `get_categories` 选合适分类（如 python 专栏 ID:5）；需新分类则引导用户在管理后台创建
-5. **生成草稿**：用 `create_draft` 创建，content 严格按下方深色 HTML 模板，设置 title / summary / tags / category_id
-6. **脑图（可选）**：结构层级 4 层以上 → 用 `make_mindmap`，得到的 iframe 原样写入 content，只调一次
+2. **提炼主旨**：通读后提炼「主题大意 + 核心模块」作为排版骨架，并标出原文总结不到位 / 缺失的知识点
+3. **联网补充**：针对不到位 / 缺失的知识点，用 `search_web` 搜索细节、定义、最新进展、案例；重要来源用 `read_url` 深度阅读
+4. **查重**：用 `search_articles` 搜索，避免与已有文章重复
+5. **确定分类**：用 `get_categories` 选合适分类（如 python 专栏 ID:5）；需新分类则引导用户在管理后台创建
+6. **生成草稿**：用 `create_draft` 创建，content 严格按下方深色 HTML 模板，设置 title / summary / tags / category_id
+7. **脑图（可选）**：结构层级 4 层以上 → 用 `make_mindmap`，得到的 iframe 原样写入 content，只调一次
 
 ## HTML 模板（深色主题 + GitHub Dark 代码高亮）
 
@@ -67,7 +70,9 @@
 ```
 
 ## rules
-- **核心原则：保留原文主题大意，只做整理 + 适度补充**，绝不偏离主旨
+- **核心原则：保留原文主题大意和结构做整理；对原文总结不到位 / 缺失的知识点，联网搜索补全完善**
+- 联网补充围绕原文主旨，不写与主旨无关的扩展
+- 联网补充的信息要标注来源
 - 标题从 `<h2>` 开始，不手写 `<h1>`
 - 表格必须有 thead / tbody + 内联样式
 - 技术文章必须有代码块 + GitHub Dark 语法高亮（关键字 #ff7b72 / 字符串 #79c0ff / 注释 #8b949e）
